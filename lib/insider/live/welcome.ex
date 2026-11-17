@@ -130,7 +130,8 @@ defmodule Insider.Live.Welcome do
       "renews_lease" => true,
       "summary" =>
         "Changes a running session's recording options (any start option; each one given replaces the session's value, null returns it to its default) " <>
-          "without losing its history, cursors, readers or subscribers. Poller options return to their defaults when the components leave the poller out. " <>
+          "without losing its history, cursors, readers or subscribers. Poller options return to their defaults when the components leave the poller out, " <>
+          "and Telemetry events and measurements when they leave telemetry out. " <>
           "The next receipt is a live.session_amended event " <>
           "every reader sees through any view, with what changed and uncollected_ms, the pause in collection."
     },

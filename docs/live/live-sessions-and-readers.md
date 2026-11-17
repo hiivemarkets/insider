@@ -368,6 +368,8 @@ mix insider.live amend "${N[@]}" --session SESSION_ID --reset watch-process --re
 
 A kept Poller option (`poller_interval_ms`, `top_processes`, `top_ets_tables`, `watch_processes`) returns to its default when the amended `"components"` leave the poller out. This includes `"components" => nil` (observer `--reset component`), because the default components never include the poller. A Poller option given in the same amendment is still `invalid_options`.
 
+Kept `"telemetry_events"` and `"telemetry_measurements"` return to their defaults the same way when the amended `"components"` leave `"telemetry"` out. Given in the same amendment, they are still `invalid_options`.
+
 The owner validates the merged options as `start/1` would, before any side effect. Then it copies the running segment into the session's archive, stops its collectors, and starts new ones under the same session id.
 
 Receipts stay consecutive. The next receipt is a `live.session_amended` event (source `live`) that every view shows. Its attributes carry `number`, `applied`, `by`, `requested`, `changed` (each effective option that changed), `from`, `to`, and `uncollected_ms`. `uncollected_ms` is the time from the seal of the old segment until the new one started, when no collector ran. Insider does not record events emitted in that pause. The event reports the pause.

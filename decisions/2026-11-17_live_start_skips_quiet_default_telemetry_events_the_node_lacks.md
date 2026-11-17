@@ -52,5 +52,9 @@ plain app it met.
   required without quiet events. It describes the skip instead.
 - An agent that sees `telemetry_hint` can add events later with
   `amend --telemetry-event`, which brings the telemetry component back.
+  The session keeps the telemetry component in its requested options, so
+  an amendment that leaves `telemetry` out returns the kept
+  `telemetry_events` and `telemetry_measurements` to their defaults, as it
+  already did for Poller and call-trace options.
 - The bounds, the disclosure profiles, and the quiet defaults of a start
   without options are unchanged.

@@ -213,6 +213,45 @@ defmodule Insider.Live.FiltersTest do
       assert again["telemetry_skipped_defaults"] == []
       refute Map.has_key?(again, "telemetry_hint")
     end
+
+    test "an amendment that leaves telemetry out drops its kept events and measurements" do
+      # Telemetry was left out at start for want of defaults, with its
+      # measurement: Logger alone stays a valid amendment.
+      assert {:ok, %{"session_id" => id, "components" => ["logger"]}} =
+               Live.start(%{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_measurements" => ["duration"]
+               })
+
+      assert {:ok, %{"components" => ["logger"], "telemetry_skipped_defaults" => []} = amended} =
+               Live.amend(id, %{"components" => ["logger"]})
+
+      refute Map.has_key?(amended, "telemetry_hint")
+
+      # Named events and measurements are dropped the same way, as kept
+      # Poller and call-trace options are.
+      assert {:ok, %{"components" => ["logger", "telemetry"]}} =
+               Live.amend(id, %{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_events" => [segments(@tick)],
+                 "telemetry_measurements" => ["duration"]
+               })
+
+      assert {:ok,
+              %{
+                "components" => ["logger"],
+                "telemetry_events" => [],
+                "telemetry_measurements" => []
+              }} =
+               Live.amend(id, %{"components" => ["logger"]})
+
+      # Given with telemetry left out, they are still refused.
+      assert {:error, %{"code" => "invalid_options", "field" => "telemetry_measurements"}} =
+               Live.amend(id, %{
+                 "components" => ["logger"],
+                 "telemetry_measurements" => ["duration"]
+               })
+    end
   end
 
   describe "record-time Logger filters" do

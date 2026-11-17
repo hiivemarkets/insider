@@ -486,11 +486,11 @@ defmodule Insider.Live.Owner do
 
   # An amendment validates the session's options with the given ones
   # replacing theirs, as a start would, before any side effect. A `nil`
-  # value returns that option to its default, and so does a kept Poller or
-  # call-trace option when the amended components (given, kept, or the
-  # defaults after a reset) leave that component out (dropping the calls
-  # component drops its trace); such an option given with its component
-  # left out is refused as at start.
+  # value returns that option to its default, and so does a kept Poller,
+  # call-trace, or Telemetry event or measurement option when the amended
+  # components (given, kept, or the defaults after a reset) leave that
+  # component out (dropping the calls component drops its trace); such an
+  # option given with its component left out is refused as at start.
   defp dispatch({:amend, id, options}, deadline, state) do
     gated(state, deadline, :amend, fn state ->
       {state, _health} = refresh(state)
@@ -752,7 +752,15 @@ defmodule Insider.Live.Owner do
   defp dispatch(_request, _deadline, state),
     do: {{:error, Error.new("invalid_options", %{"field" => "request"})}, state}
 
-  @component_options [{"poller", PollerOptions}, {"calls", CallsOptions}]
+  # The options each component requires, kept by an amendment only while the
+  # amended components include that component.
+  defp component_options do
+    [
+      {"poller", PollerOptions.start_keys()},
+      {"calls", CallsOptions.start_keys()},
+      {"telemetry", ["telemetry_events", "telemetry_measurements"]}
+    ]
+  end
 
   defp amended_options(options, changes) do
     merged = options |> Map.merge(changes) |> Map.reject(&is_nil(elem(&1, 1)))
@@ -761,10 +769,10 @@ defmodule Insider.Live.Owner do
     components = Map.get_lazy(merged, "components", &Filters.default_components/0)
 
     if is_list(components) do
-      Enum.reduce(@component_options, merged, fn {component, module}, merged ->
+      Enum.reduce(component_options(), merged, fn {component, keys}, merged ->
         if component in components,
           do: merged,
-          else: Map.drop(merged, module.start_keys() -- Map.keys(changes))
+          else: Map.drop(merged, keys -- Map.keys(changes))
       end)
     else
       merged

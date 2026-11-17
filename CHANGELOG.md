@@ -27,6 +27,11 @@ A patch release: the quick start works on an app without Phoenix.
   first start command no longer needs the OpenTelemetry SDK. See
   `decisions/2026-11-17_live_start_skips_quiet_default_telemetry_events_the_node_lacks.md`.
 
+- An amendment whose components leave `telemetry` out no longer fails on
+  the session's kept `telemetry_events` or `telemetry_measurements`. They
+  return to their defaults, as kept Poller and call-trace options already
+  did. Given in the same amendment, they are still `invalid_options`.
+
 ### Changed
 
 - The Lab README, the landing page of the Lab's hexdocs, is now a short

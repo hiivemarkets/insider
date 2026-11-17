@@ -437,7 +437,8 @@ defmodule Insider.Live.Options do
           "default" => "the session's current values",
           "note" =>
             "every start option; each one given replaces the session's value (a list replaces the whole list), null returns it to its default, " <>
-              "and the rest keep theirs, except that the poller options return to their defaults when the components leave the poller out"
+              "and the rest keep theirs, except that the poller options return to their defaults when the components leave the poller out, " <>
+              "and telemetry_events and telemetry_measurements when they leave telemetry out"
         }
       },
       "trace" =>
