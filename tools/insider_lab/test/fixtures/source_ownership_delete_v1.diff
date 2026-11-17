@@ -1,0 +1,7 @@
+diff --git a/lib/deleted.ex b/lib/deleted.ex
+deleted file mode 100644
+index 3367afd..0000000
+--- a/lib/deleted.ex
++++ /dev/null
+@@ -1 +0,0 @@
+-old

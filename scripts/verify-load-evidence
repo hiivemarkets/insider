@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Re-derives the integrity of one or more `mix insider.load` evidence
+# directories offline. Prints one JSON line per directory and exits nonzero if
+# any directory fails a check.
+#
+# Checks per directory:
+#   - manifest.json, report.json, and profile.json exist and parse as JSON
+#   - every manifest artifact's sha256 and byte_size match the file on disk,
+#     and the manifest lists report.json and profile.json
+#   - manifest.id and report.id equal "sha256:" + integrity.content_digest
+#   - report.inputs.profile_sha256 equals the sha256 of profile.json
+#   - manifest.json and report.json are byte-identical to their canonical
+#     encoding (keys sorted, compact, no trailing newline); a document that is
+#     not canonical is a mismatch, because its identity cannot be recomputed
+#   - manifest.id and report.id equal the sha256 of the canonical body with
+#     id and integrity removed; `id_recomputed` reports whether both documents
+#     were canonical, so it is true whenever `ok` is
+#
+# No mix task or escript recomputes artifact identities, so this script uses
+# the OTP `json` module (OTP 27 or later) instead of the project's own encoder.
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  printf 'usage: %s <evidence-dir> [<evidence-dir>...]\n' "$0" >&2
+  exit 2
+fi
+
+if ! command -v elixir >/dev/null 2>&1; then
+  printf '%s\n' 'verify-load-evidence requires elixir (OTP 27 or later) on PATH' >&2
+  exit 2
+fi
+
+verify_directory() {
+  elixir --eval '
+    defmodule VerifyLoadEvidence do
+      @required ~w(manifest.json profile.json report.json)
+
+      def run(directory) do
+        files = Map.new(@required, &{&1, read(Path.join(directory, &1))})
+        documents = Map.new(files, fn {name, bytes} -> {name, decode(bytes)} end)
+        manifest = documents["manifest.json"]
+        report = documents["report.json"]
+
+        mismatches =
+          []
+          |> missing(files)
+          |> unparsed(documents)
+          |> check(is_map(manifest) and manifest["schema"] == "insider.load-manifest/v1", "manifest_schema")
+          |> check(is_map(report) and report["schema"] == "insider.load-report/v1", "report_schema")
+          |> artifacts(manifest, files)
+          |> identity(manifest, "manifest")
+          |> identity(report, "report")
+          |> check(
+            is_map(report) and get_in(report, ["inputs", "profile_sha256"]) == sha256(files["profile.json"]),
+            "report_profile_binding"
+          )
+
+        {recomputed?, mismatches} = recompute(mismatches, files, documents)
+
+        line = %{
+          "directory" => directory,
+          "git_sha" => get_in_document(report, ["revision", "git_sha"]),
+          "otp" => get_in_document(report, ["runtime", "otp"]),
+          "elixir" => get_in_document(report, ["runtime", "elixir"]),
+          "outcome" => get_in_document(report, ["outcome"]),
+          "report_id" => get_in_document(report, ["id"]),
+          "report_sha256" => sha256(files["report.json"]),
+          "manifest_sha256" => sha256(files["manifest.json"]),
+          "profile_sha256" => sha256(files["profile.json"]),
+          "id_recomputed" => recomputed?,
+          "mismatches" => Enum.reverse(mismatches),
+          "ok" => mismatches == []
+        }
+
+        IO.puts(:json.encode(Map.new(line, fn {key, nil} -> {key, :null}; pair -> pair end)))
+        if mismatches == [], do: System.halt(0), else: System.halt(1)
+      end
+
+      defp read(path) do
+        case File.read(path) do
+          {:ok, bytes} -> bytes
+          {:error, _reason} -> nil
+        end
+      end
+
+      defp decode(nil), do: nil
+
+      defp decode(bytes) do
+        :json.decode(bytes)
+      rescue
+        _error -> nil
+      catch
+        _kind, _reason -> nil
+      end
+
+      defp missing(mismatches, files) do
+        Enum.reduce(@required, mismatches, fn name, acc ->
+          check(acc, is_binary(files[name]), "missing_" <> stem(name))
+        end)
+      end
+
+      defp unparsed(mismatches, documents) do
+        Enum.reduce(@required, mismatches, fn name, acc ->
+          check(acc, is_map(documents[name]), "unparsed_" <> stem(name))
+        end)
+      end
+
+      defp artifacts(mismatches, %{"artifacts" => artifacts}, files) when is_list(artifacts) do
+        listed = for %{"path" => path} <- artifacts, is_binary(path), do: path
+
+        mismatches =
+          Enum.reduce(~w(profile.json report.json), mismatches, fn name, acc ->
+            check(acc, name in listed, "manifest_omits_" <> stem(name))
+          end)
+
+        Enum.reduce(artifacts, mismatches, fn artifact, acc ->
+          path = if is_map(artifact), do: artifact["path"], else: nil
+          bytes = if is_binary(path), do: files[path], else: nil
+          label = if is_binary(path), do: stem(path), else: "unknown"
+
+          acc
+          |> check(is_binary(bytes), "artifact_unreadable_" <> label)
+          |> check(is_binary(bytes) and artifact["sha256"] == sha256(bytes), "artifact_sha256_" <> label)
+          |> check(is_binary(bytes) and artifact["byte_size"] == byte_size(bytes), "artifact_byte_size_" <> label)
+        end)
+      end
+
+      defp artifacts(mismatches, _manifest, _files), do: ["manifest_artifacts" | mismatches]
+
+      defp identity(mismatches, %{"id" => id, "integrity" => %{"algorithm" => "sha256", "content_digest" => digest}}, label)
+           when is_binary(id) and is_binary(digest),
+           do: check(mismatches, id == "sha256:" <> digest, label <> "_id_integrity")
+
+      defp identity(mismatches, _document, label), do: [label <> "_id_integrity" | mismatches]
+
+      defp recompute(mismatches, files, documents) do
+        Enum.reduce(~w(manifest.json report.json), {true, mismatches}, fn name, {all?, acc} ->
+          document = documents[name]
+
+          if is_map(document) and canonical(document) == files[name] do
+            digest = document |> Map.drop(["id", "integrity"]) |> canonical() |> sha256()
+            {all?, check(acc, document["id"] == "sha256:" <> digest, stem(name) <> "_id_recomputation")}
+          else
+            {false, [stem(name) <> "_not_canonical" | acc]}
+          end
+        end)
+      end
+
+      defp canonical(value), do: value |> encode() |> IO.iodata_to_binary()
+
+      defp encode(value) when is_map(value) do
+        entries =
+          value
+          |> Enum.sort_by(fn {key, _item} -> key end)
+          |> Enum.map_intersperse(?,, fn {key, item} -> [:json.encode_binary(key), ?:, encode(item)] end)
+
+        [?{, entries, ?}]
+      end
+
+      defp encode(value) when is_list(value), do: [?[, Enum.map_intersperse(value, ?,, &encode/1), ?]]
+      defp encode(value), do: :json.encode_value(value, &:json.encode_value/2)
+
+      defp sha256(nil), do: nil
+      defp sha256(bytes), do: :sha256 |> :crypto.hash(bytes) |> Base.encode16(case: :lower)
+
+      defp check(mismatches, true, _label), do: mismatches
+      defp check(mismatches, false, label), do: [label | mismatches]
+
+      defp get_in_document(document, path) when is_map(document) do
+        case get_in(document, path) do
+          value when is_binary(value) -> value
+          _other -> nil
+        end
+      end
+
+      defp get_in_document(_document, _path), do: nil
+
+      defp stem(name), do: String.replace_suffix(name, ".json", "")
+    end
+
+    VerifyLoadEvidence.run(hd(System.argv()))
+  ' -- "$1"
+}
+
+status=0
+
+for directory in "$@"; do
+  verify_directory "$directory" || status=1
+done
+
+exit "$status"

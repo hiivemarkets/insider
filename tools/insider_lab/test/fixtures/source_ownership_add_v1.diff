@@ -1,0 +1,7 @@
+diff --git a/lib/added.ex b/lib/added.ex
+new file mode 100644
+index 0000000..3e75765
+--- /dev/null
++++ b/lib/added.ex
+@@ -0,0 +1 @@
++new

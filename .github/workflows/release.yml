@@ -1,0 +1,82 @@
+name: release
+
+# Publishes `insider`, then `insider_lab`, to Hex from a version tag.
+#
+# The first release of each package is published by hand, because a Hex
+# workload identity cannot create a package or publish its first release.
+# docs/development.md "Releasing" has both procedures.
+#
+# This job holds no Hex key. With no API key in its environment, each `mix hex.publish`
+# exchanges a fresh GitHub OIDC token for a short-lived Hex key, through the
+# workload identity of the Hex organization `clarity`, which owns both
+# packages. The identity names this repository, this file and the `release`
+# environment. The environment's required reviewers approve the job before it
+# starts. Staged publishing then holds each release until a maintainer with
+# 2FA approves it on hex.pm.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to Hex
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Workload identity needs OTP 27 or later.
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          elixir-version: "1.20"
+          otp-version: "29"
+      - run: mix deps.get --check-locked
+      - name: Check that the tag names the version of both packages
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          core_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)"
+          lab_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' tools/insider_lab/mix.exs)"
+          echo "tag ${GITHUB_REF_NAME}, insider ${core_version}, insider_lab ${lab_version}"
+          if [ "$tag_version" != "$core_version" ] || [ "$tag_version" != "$lab_version" ]; then
+            echo "::error::The tag ${GITHUB_REF_NAME} must be v plus the version in both mix.exs files."
+            exit 1
+          fi
+          echo "VERSION=${tag_version}" >> "$GITHUB_ENV"
+      - name: Publish insider
+        run: mix hex.publish --yes
+      # The Lab depends on `insider ~> VERSION` from Hex, so it can only
+      # resolve after the core release is approved and available.
+      - name: Wait until insider ${{ env.VERSION }} is on Hex
+        run: |
+          url="https://hex.pm/api/packages/insider/releases/${VERSION}"
+          for _attempt in $(seq 1 120); do
+            if curl --silent --fail --output /dev/null "$url"; then
+              echo "insider ${VERSION} is on Hex."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::insider ${VERSION} did not appear on Hex within 60 minutes. Approve the staged release, then publish insider_lab by hand."
+          exit 1
+      # INSIDER_LAB_HEX=1 makes the Lab depend on the core from Hex, not by
+      # path, with its own deps and lockfile. The root lockfile seeds that
+      # lockfile, so the shared dependencies keep their locked versions.
+      - name: Publish insider_lab
+        working-directory: tools/insider_lab
+        env:
+          INSIDER_LAB_HEX: "1"
+        run: |
+          cp ../../mix.lock mix.lock
+          mix deps.get
+          mix hex.publish --yes

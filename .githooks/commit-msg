@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Keep history machine-readable for releases and agent handoffs.
+set -euo pipefail
+
+subject="$(sed -n '1p' "$1")"
+pattern='^(feat|improv|fix|chore|docs|style|refactor|test|ci|build)(\([a-z0-9._/-]+\))?!?: .{1,72}$'
+
+if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
+  echo "[commit-msg] expected Conventional Commit subject" >&2
+  echo "[commit-msg] example: feat(recorder): bound retained events" >&2
+  exit 1
+fi
+
+if printf '%s\n' "$subject" | grep -Eq '\.$'; then
+  echo "[commit-msg] subject must not end with a period" >&2
+  exit 1
+fi

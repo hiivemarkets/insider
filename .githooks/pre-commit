@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Fast, deterministic checks before a commit is created.
+set -euo pipefail
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMRD)"
+
+if [ -z "$staged_files" ]; then
+  echo "[pre-commit] no staged files"
+  exit 0
+fi
+
+# The checks below read the working tree. Refuse partial commits so the content
+# tested is exactly the content staged. Agents should use isolated worktrees for
+# separate changes rather than validating one diff and committing another.
+if ! git diff --quiet -- || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  echo "[pre-commit] unstaged or untracked files would make validation ambiguous" >&2
+  echo "[pre-commit] stage the complete change or move unrelated work elsewhere" >&2
+  exit 1
+fi
+
+printf '%s\n' "$staged_files" | .githooks/check-test-pairing
+
+echo "[pre-commit] staged whitespace..."
+git diff --cached --check
+
+# Git exports GIT_DIR and GIT_INDEX_FILE to hooks. Tests that run git in
+# scratch directories would inherit them and act on this repository, so mix
+# runs without them.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
+echo "[pre-commit] format..."
+mix format --check-formatted
+
+echo "[pre-commit] compile (--warnings-as-errors)..."
+mix compile --warnings-as-errors
+
+echo "[pre-commit] full tests..."
+mix test
+
+echo "[pre-commit] Credo + ex_slop..."
+mix credo --strict
+
+echo "[pre-commit] all fast checks passed"

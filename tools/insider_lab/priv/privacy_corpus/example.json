@@ -1,0 +1,98 @@
+{
+  "schema": "insider.privacy-corpus/v1",
+  "canary_tokens": [
+    "CANARY-EMAIL-0001",
+    "CANARY-REQUEST-0002",
+    "CANARY-TRACE-0003",
+    "CANARY-CARD-0004",
+    "CANARY-OPERATION-0005",
+    "CANARY-ACCOUNT-0006",
+    "CANARY-TOKEN-0007"
+  ],
+  "telemetry_policy": {
+    "id": "example-telemetry",
+    "events": [
+      {
+        "name": ["insider", "fixture", "operation", "start"],
+        "kind": "example.operation.start",
+        "lifecycle": "operation",
+        "phase": "start"
+      },
+      {
+        "name": ["insider", "fixture", "operation", "stop"],
+        "kind": "example.operation.stop",
+        "lifecycle": "operation",
+        "phase": "stop"
+      }
+    ],
+    "metadata": {"scenario": "scenario"},
+    "measurements": {"duration": "duration"},
+    "correlation": {"logical_operation_id": "run_id"}
+  },
+  "items": [
+    {
+      "source": "logger",
+      "level": "info",
+      "message": {
+        "type": "string",
+        "value": "user CANARY-EMAIL-0001 signed in from 203.0.113.10"
+      },
+      "metadata": {
+        "domain": ["example_app"],
+        "request_id": "CANARY-REQUEST-0002",
+        "trace_id": "CANARY-TRACE-0003"
+      }
+    },
+    {
+      "source": "logger",
+      "level": "error",
+      "message": {
+        "type": "report",
+        "report": {
+          "label": "checkout.failed",
+          "card_number": "CANARY-CARD-0004",
+          "customer": {"email": "CANARY-EMAIL-0001"}
+        }
+      },
+      "metadata": {
+        "time": 1700000000000000,
+        "logical_operation_id": "CANARY-OPERATION-0005"
+      }
+    },
+    {
+      "source": "logger",
+      "level": "warning",
+      "message": {
+        "type": "format",
+        "format": "payment for ~s declined",
+        "arguments": ["CANARY-ACCOUNT-0006"]
+      }
+    },
+    {
+      "source": "telemetry",
+      "event_name": ["insider", "fixture", "operation", "start"],
+      "measurements": {"duration": 12, "amount_cents": 999999},
+      "metadata": {
+        "run_id": "example-operation-1",
+        "scenario": "checkout",
+        "customer_email": "CANARY-EMAIL-0001",
+        "session_token": "CANARY-TOKEN-0007"
+      }
+    },
+    {
+      "source": "telemetry",
+      "event_name": ["insider", "fixture", "operation", "stop"],
+      "measurements": {"duration": 48},
+      "metadata": {
+        "run_id": "example-operation-1",
+        "scenario": "checkout",
+        "customer_email": "CANARY-EMAIL-0001"
+      }
+    },
+    {
+      "source": "telemetry",
+      "event_name": ["example_app", "users", "created"],
+      "metadata": {"email": "CANARY-EMAIL-0001"}
+    }
+  ]
+}

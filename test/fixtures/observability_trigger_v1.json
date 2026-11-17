@@ -1,0 +1,1 @@
+{"external_event_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","external_incident_fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","id":"sha256:31d6108fe6415684529936b035dd565129cc60e932eb32aa8b8d77d2eb7d28cd","operation":"follow_up","provider":"sentry","schema":"insider.observability-trigger/v1"}

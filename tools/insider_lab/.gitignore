@@ -1,0 +1,6 @@
+/_build/
+/insider-lab
+/tmp/
+/deps/
+/mix.lock
+/insider_lab-*.tar

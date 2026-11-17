@@ -1,0 +1,6 @@
+* @kevinhiive
+
+# Changes that redefine agent authority or weaken gates always need owner review.
+/AGENTS.md @kevinhiive
+/.githooks/ @kevinhiive
+/.github/workflows/ @kevinhiive

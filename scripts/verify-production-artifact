@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+forbidden_modules='Insider.Sentinel, Insider.Fixtures, Insider.Scenario, Insider.Contract, Insider.Invariant, Insider.Adapter.CLI, Insider.Adapter.MixTask, Insider.Incident.RestartCapture, Insider.Lab, Mix.Tasks.Insider'
+
+build_root=""
+release_root=""
+
+cleanup() {
+  [ -z "$build_root" ] || rm -rf "$build_root"
+  [ -z "$release_root" ] || rm -rf "$release_root"
+}
+
+trap cleanup EXIT
+
+lab_source_entry?() {
+  case "$1" in
+    lib/insider/sentinel/* | lib/insider/fixtures/* | lib/insider/scenario/* | lib/insider/contract/* | lib/insider/adapter/cli/* | lib/insider/incident/restart_capture/* | lib/insider/lab/* | lib/mix/tasks/* | lib/insider_lab/*)
+      return 0
+      ;;
+    lib/insider/fixtures.ex | lib/insider/scenario.ex | lib/insider/contract.ex | lib/insider/invariant.ex | lib/insider/adapter/cli.ex | lib/insider/adapter/mix_task.ex | lib/insider/incident/restart_capture.ex)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+lab_module?() {
+  case "${1#Elixir.}" in
+    Insider.Sentinel* | Insider.Fixtures* | Insider.Scenario* | Insider.Contract* | Insider.Invariant* | Insider.Adapter.CLI* | Insider.Adapter.MixTask* | Insider.Incident.RestartCapture* | Insider.Lab* | Mix.Tasks.Insider*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+lab_release_application?() {
+  case "$1" in
+    insider_lab | insider_lab-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_no_lab_source_entries() {
+  local entry
+
+  while IFS= read -r entry; do
+    [ -z "$entry" ] || ! lab_source_entry? "$entry" || {
+      printf 'production artifact source inventory contains a Lab-only entry: %s\n' "$entry" >&2
+      exit 1
+    }
+  done
+}
+
+assert_no_lab_modules() {
+  local label="$1"
+  local entry
+
+  while IFS= read -r entry; do
+    [ -z "$entry" ] || ! lab_module? "$entry" || {
+      printf 'production artifact %s contains a Lab-only module: %s\n' "$label" "$entry" >&2
+      exit 1
+    }
+  done
+}
+
+assert_no_lab_release_applications() {
+  local entry
+
+  while IFS= read -r entry; do
+    [ -z "$entry" ] || ! lab_release_application? "$entry" || {
+      printf 'production release contains the Lab application: %s\n' "$entry" >&2
+      exit 1
+    }
+  done
+}
+
+read_application_modules() {
+  local app_file="$1"
+
+  elixir --eval '
+    case :file.consult(String.to_charlist(hd(System.argv()))) do
+      {:ok, [{:application, :insider, attributes}]} ->
+        case Keyword.fetch(attributes, :modules) do
+          {:ok, modules} when is_list(modules) -> Enum.each(modules, &(IO.puts(Atom.to_string(&1))))
+          _ -> System.halt(1)
+        end
+
+      _ ->
+        System.halt(1)
+    end
+  ' -- "$app_file"
+}
+
+if [ "${INSIDER_ARTIFACT_SKIP_FRESH_BUILD:-}" = "1" ]; then
+  ebin_dir="${INSIDER_EBIN_DIR:?INSIDER_EBIN_DIR is required when skipping the fresh build}"
+else
+  build_root="$(mktemp -d "${TMPDIR:-/tmp}/insider-artifact-build.XXXXXX")"
+  release_root="$(mktemp -d "${TMPDIR:-/tmp}/insider-artifact-release.XXXXXX")"
+
+  (
+    cd "$root"
+    MIX_ENV=prod MIX_BUILD_PATH="$build_root" mix compile --warnings-as-errors
+    MIX_ENV=prod MIX_BUILD_PATH="$build_root" mix release --overwrite --path "$release_root"
+  )
+
+  ebin_dir="$(find "$build_root" -type d -path '*/lib/insider/ebin' -print -quit)"
+fi
+
+if find "$root/lib" -type l -print -quit | grep -q . || [ -n "${INSIDER_ARTIFACT_SOURCE_LINK_ENTRY:-}" ]; then
+  printf '%s\n' 'production artifact source inventory rejects linked source entries' >&2
+  exit 1
+fi
+
+source_entries="$(find "$root/lib" -type f -name '*.ex' -print | sed "s#^$root/##")"
+source_entries="${source_entries}${INSIDER_ARTIFACT_SOURCE_ENTRY:+$'\n'}${INSIDER_ARTIFACT_SOURCE_ENTRY:-}"
+printf '%s\n' "$source_entries" | assert_no_lab_source_entries
+
+if grep -R -n -E --include='*.ex' '(System\.cmd|Port\.open|File\.rm|File\.write|File\.cp|:os\.cmd)' "$root/lib"; then
+  printf '%s\n' 'production artifact source exposes a command or mutation primitive' >&2
+  exit 1
+fi
+
+network_module_pattern='(:httpc|:httpd|:gen_(tcp|udp|sctp)|:ssl|:socket|:inet|:inets|:gun|:ssh|Req|Finch|Mint|Tesla|HTTPoison|Hackney)'
+network_primitive_pattern="(${network_module_pattern}\\.)|((apply|Kernel\\.apply|:erlang\\.apply)\\(${network_module_pattern},)"
+network_source_matches="$(grep -R -n -E --include='*.ex' "$network_primitive_pattern" "$root/lib" || true)"
+
+# apply/3 hides its target from the compiled import audit. Deny every new
+# production occurrence and retain only the four exact, independently reviewed
+# runtime dispatches that predate this gate.
+dynamic_dispatch_pattern='(^|[^[:alnum:]_])((apply|Kernel\.apply|:erlang\.apply)[[:space:]]*(\(|/3)|Function\.capture[[:space:]]*\()'
+dynamic_source_matches="$(grep -R -n -E --include='*.ex' "$dynamic_dispatch_pattern" "$root/lib" || true)"
+dynamic_source_matches="${dynamic_source_matches}${INSIDER_ARTIFACT_DYNAMIC_DISPATCH_MATCH_ENTRY:+$'\n'}${INSIDER_ARTIFACT_DYNAMIC_DISPATCH_MATCH_ENTRY:-}"
+unapproved_dynamic_source_matches=""
+poller_dispatches=0
+system_monitor_dispatches=0
+trace_system_dispatches=0
+trace_info_dispatches=0
+
+while IFS= read -r match; do
+  [ -z "$match" ] && continue
+  relative_match="${match#"$root/"}"
+
+  case "$relative_match" in
+    lib/insider/collector/poller.ex:*':    apply(provider, function, arguments)')
+      poller_dispatches=$((poller_dispatches + 1))
+      [ "$poller_dispatches" -eq 1 ] || unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}${match}"
+      ;;
+    lib/insider/collector/system_monitor.ex:*':    apply(__MODULE__, :start_link, [recorder, policy, options])')
+      system_monitor_dispatches=$((system_monitor_dispatches + 1))
+      [ "$system_monitor_dispatches" -eq 1 ] || unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}${match}"
+      ;;
+    lib/insider/collector/system_monitor/backend.ex:*':    do: :erlang.apply(:trace, :system, [session, event, value])')
+      trace_system_dispatches=$((trace_system_dispatches + 1))
+      [ "$trace_system_dispatches" -eq 1 ] || unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}${match}"
+      ;;
+    lib/insider/collector/system_monitor/backend.ex:*':    do: :erlang.apply(:trace, :info, [session, :system, :all])')
+      trace_info_dispatches=$((trace_info_dispatches + 1))
+      [ "$trace_info_dispatches" -eq 1 ] || unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}${match}"
+      ;;
+    *)
+      unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}${match}"
+      ;;
+  esac
+done <<< "$dynamic_source_matches"
+
+if [ "$poller_dispatches" -ne 1 ] || [ "$system_monitor_dispatches" -ne 1 ] ||
+  [ "$trace_system_dispatches" -ne 1 ] || [ "$trace_info_dispatches" -ne 1 ]; then
+  unapproved_dynamic_source_matches="${unapproved_dynamic_source_matches}${unapproved_dynamic_source_matches:+$'\n'}audited dynamic-dispatch inventory changed"
+fi
+
+if [ -n "$unapproved_dynamic_source_matches" ]; then
+  network_source_matches="${network_source_matches}${network_source_matches:+$'\n'}${unapproved_dynamic_source_matches}"
+fi
+
+if [ -n "${INSIDER_ARTIFACT_NETWORK_SOURCE_ENTRY:-}" ] &&
+  { printf '%s' "$INSIDER_ARTIFACT_NETWORK_SOURCE_ENTRY" | tr -d '[:space:]' | grep -q -E "$network_primitive_pattern" ||
+    printf '%s' "$INSIDER_ARTIFACT_NETWORK_SOURCE_ENTRY" | grep -q -E "$dynamic_dispatch_pattern"; }; then
+  network_source_matches="${network_source_matches}${network_source_matches:+$'\n'}${INSIDER_ARTIFACT_NETWORK_SOURCE_ENTRY}"
+fi
+
+if [ -n "$network_source_matches" ]; then
+  printf '%s\n' "$network_source_matches" >&2
+  printf '%s\n' 'production artifact source exposes a network authority primitive' >&2
+  exit 1
+fi
+
+if [ ! -d "$ebin_dir" ]; then
+  printf 'production artifact ebin directory is missing: %s\n' "$ebin_dir" >&2
+  exit 1
+fi
+
+elixir --eval '
+  denied =
+    MapSet.new([
+      "Elixir.Finch",
+      "Elixir.HTTPoison",
+      "Elixir.Mint.HTTP",
+      "Elixir.Req",
+      "Elixir.Tesla",
+      "gen_sctp",
+      "gen_tcp",
+      "gen_udp",
+      "gun",
+      "hackney",
+      "httpc",
+      "httpd",
+      "inet",
+      "inet_tcp",
+      "inet_udp",
+      "inets",
+      "socket",
+      "ssh",
+      "ssl"
+    ])
+
+  imported =
+    System.argv()
+    |> Enum.flat_map(fn beam ->
+      case :beam_lib.chunks(String.to_charlist(beam), [:imports]) do
+        {:ok, {owner, [imports: imports]}} ->
+          for {module, function, arity} <- imports,
+              MapSet.member?(denied, Atom.to_string(module)),
+              do: {owner, module, function, arity}
+
+        _ ->
+          IO.puts(:stderr, "production artifact network import audit could not inspect #{beam}")
+          System.halt(1)
+      end
+    end)
+
+  imported =
+    case System.get_env("INSIDER_ARTIFACT_NETWORK_IMPORT_ENTRY") do
+      nil -> imported
+      "" -> imported
+      module ->
+        if MapSet.member?(denied, module),
+          do: [{:injected, module, :request, 1} | imported],
+          else: imported
+    end
+
+  if imported != [] do
+    Enum.each(imported, &IO.puts(:stderr, inspect(&1)))
+    IO.puts(:stderr, "production artifact compiled imports expose network authority")
+    System.halt(1)
+  end
+' -- "$ebin_dir"/*.beam
+
+module_entries="$(find "$ebin_dir" -maxdepth 1 -type f -name '*.beam' -exec basename {} .beam \; | sort)"
+module_entries="${module_entries}${INSIDER_ARTIFACT_MODULE_ENTRY:+$'\n'}${INSIDER_ARTIFACT_MODULE_ENTRY:-}"
+printf '%s\n' "$module_entries" | assert_no_lab_modules 'compiled inventory'
+
+app_file="$ebin_dir/insider.app"
+
+if [ ! -f "$app_file" ]; then
+  printf 'production artifact application inventory is missing: %s\n' "$app_file" >&2
+  exit 1
+fi
+
+app_modules="$(read_application_modules "$app_file")"
+app_modules="${app_modules}${INSIDER_ARTIFACT_APP_MODULE_ENTRY:+$'\n'}${INSIDER_ARTIFACT_APP_MODULE_ENTRY:-}"
+printf '%s\n' "$app_modules" | assert_no_lab_modules 'application inventory'
+
+release_modules="${INSIDER_ARTIFACT_RELEASE_MODULE_ENTRY:-}"
+release_applications="${INSIDER_ARTIFACT_RELEASE_APPLICATION_ENTRY:-}"
+
+if [ -n "$release_root" ]; then
+  release_applications="$(find "$release_root/lib" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)${release_applications:+$'\n'}${release_applications}"
+  release_modules="$(find "$release_root/lib" -type f -path '*/ebin/*.beam' -exec basename {} .beam \; | sort)${release_modules:+$'\n'}${release_modules}"
+fi
+
+printf '%s\n' "$release_applications" | assert_no_lab_release_applications
+printf '%s\n' "$release_modules" | assert_no_lab_modules 'release compiled inventory'
+
+if [ -n "$release_root" ]; then
+  # The release also ships a Windows `insider.bat`. Name the Unix launcher
+  # explicitly: directory order decides which executable `find` returns first.
+  release_bin="$release_root/bin/insider"
+
+  if [ ! -f "$release_bin" ] || [ ! -x "$release_bin" ]; then
+    printf '%s\n' 'production release executable is missing' >&2
+    exit 1
+  fi
+
+  "$release_bin" eval "for module <- [$forbidden_modules], Code.ensure_loaded?(module), do: raise(\"forbidden Lab module loaded: #{inspect(module)}\")"
+fi

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Full local gate. Slow whole-program analysis remains in CI.
+set -euo pipefail
+
+# Git exports GIT_DIR (and may export the others) to hooks. Tests that run
+# git in scratch directories would inherit them and act on this repository,
+# so mix runs without them.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+
+echo "[pre-push] full quality gate..."
+mix quality
+
+echo "[pre-push] semantic duplication scan..."
+mix ex_dna
+
+echo "[pre-push] all checks passed"

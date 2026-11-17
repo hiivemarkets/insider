@@ -1,0 +1,84 @@
+name: load and soak evidence
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Synthetic evidence profile to run
+        required: true
+        default: soak
+        type: choice
+        options:
+          - soak
+          - load
+
+concurrency:
+  group: load-soak-${{ github.workflow }}-${{ github.ref }}-${{ inputs.profile || 'load' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: ${{ github.event_name == 'schedule' && 'soak' || inputs.profile || 'load' }} / Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MIX_ENV: test
+      EVIDENCE_PROFILE: ${{ github.event_name == 'schedule' && 'soak' || inputs.profile || 'load' }}
+      EVIDENCE_OUTPUT: artifacts/${{ github.sha }}/elixir-${{ matrix.elixir }}-otp-${{ matrix.otp }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.17"
+            otp: "27"
+          - elixir: "1.19"
+            otp: "28"
+          - elixir: "1.20"
+            otp: "29"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            deps
+            _build
+          key: load-mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.lock') }}
+          restore-keys: load-mix-${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-
+      - run: cd tools/insider_load && mix deps.get --check-locked
+      - run: cd tools/insider_load && mix format --check-formatted
+      - run: cd tools/insider_load && mix compile --warnings-as-errors
+      - run: cd tools/insider_load && mix test
+      - id: harness
+        name: Run synthetic evidence harness
+        shell: bash
+        run: |
+          set +e
+          (cd tools/insider_load && mix insider.load \
+            --profile "config/${EVIDENCE_PROFILE}.json" \
+            --output "../../${EVIDENCE_OUTPUT}")
+          exit_code=$?
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload revision- and runtime-bound evidence
+        if: ${{ always() && steps.harness.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: insider-${{ env.EVIDENCE_PROFILE }}-${{ github.sha }}-elixir-${{ matrix.elixir }}-otp-${{ matrix.otp }}
+          path: ${{ env.EVIDENCE_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Enforce harness result
+        if: ${{ always() && steps.harness.outcome != 'skipped' && steps.harness.outputs.exit_code != '0' }}
+        run: exit 1
