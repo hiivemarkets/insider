@@ -32,6 +32,12 @@ A patch release: the quick start works on an app without Phoenix.
   return to their defaults, as kept Poller and call-trace options already
   did. Given in the same amendment, they are still `invalid_options`.
 
+- The Sentinel sandbox executor no longer refuses a valid provider or body
+  allowlist with `invalid_sandbox_providers` when a module's first load is
+  slow, as it can be on a busy node in interactive mode. The modules now
+  load before the 500 ms identity deadline starts, so the deadline bounds
+  only their identity callbacks.
+
 ### Changed
 
 - The Lab README, the landing page of the Lab's hexdocs, is now a short
