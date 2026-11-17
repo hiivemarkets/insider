@@ -26,18 +26,29 @@ workload identity, the manual first release and the Lab's dependency switch.
   that is not greater, by SemVer precedence, than every release of that
   package on Hex. When both packages have the version and the tag
   `vVERSION` exists, nothing else runs.
-- The `publish` job, in the environment `release`, publishes `insider`,
-  waits up to 60 minutes until Hex serves it, publishes `insider_lab`, and
-  waits for it the same way. Then it creates the annotated tag `vVERSION` on
-  the commit that Hex recorded for the core release, else the run's commit,
-  and pushes it with `GITHUB_TOKEN`. Each step looks at Hex or at the tags
-  first, so a rerun only does what is missing.
+- The `publish` job, in the environment `release`, with `contents: read`
+  and `id-token: write`, publishes `insider`, waits up to 60 minutes until
+  Hex serves it, publishes `insider_lab`, and waits for it the same way.
+  Each step looks at Hex first, so a rerun only does what is missing. Just
+  before it publishes a package, inside this serialized job, it checks the
+  SemVer precedence again.
+- Both packages of a version come from one commit. When the core is on Hex
+  and only the Lab is missing, the Lab is published only if the core's
+  provenance commit (`oidc_claims.sha`) is the run's commit. Otherwise the
+  maintainer re-runs the original run, which keeps its commit, or releases
+  a new version.
+- The `tag` job is the only job with `contents: write`. It has no
+  `id-token`, checks nothing out, and runs no project or dependency code.
+  Through the GitHub API, it creates the annotated tag `vVERSION` on the
+  commit that Hex recorded for the core release, else the run's commit,
+  after checking that this commit is on `main` and carries the version in
+  both `mix.exs` files. It also runs alone when both packages are on Hex
+  and only the tag is missing.
 - Hex staged publishing is the human gate: a maintainer with 2FA approves
   each release on hex.pm. The environment `release` admits only `main` and
   needs no reviewers. Reviewers added later would gate the job before it
   asks Hex for a key, and the workflow works the same.
-- The workflow holds no Hex key. `GITHUB_TOKEN` can write contents only in
-  the `publish` job, and only the tag step receives it.
+- The workflow holds no Hex key.
 
 ## Why
 
@@ -54,6 +65,17 @@ workload identity, the manual first release and the Lab's dependency switch.
 - **Idempotent steps.** Approval can take longer than a run waits. Asking
   Hex before each step makes a rerun safe, and lets a run that only finds
   the tag missing create it.
+- **A write token never meets build code.** `mix deps.get`, compilation and
+  `mix hex.publish` run project and dependency code, which could plant a
+  `git` wrapper through `GITHUB_PATH` or a hook and capture any token in
+  its job. So the job that builds cannot write to the repository, and the
+  job that writes runs nothing from the repository.
+- **One commit per version.** The Lab is built against the core at its
+  version. A Lab from a later commit than its core could pair code that was
+  never tested together. The core's provenance on Hex names its commit.
+- **A second precedence check.** `check` runs outside the serialized job,
+  so another run can publish in between. Checking again just before
+  publishing, under `concurrency: release`, keeps the refusal true.
 - Rejected alternatives:
   - Keeping the tag trigger and adding a bot that tags on merge. A tag
     pushed with `GITHUB_TOKEN` starts no workflow, so it needs a stored

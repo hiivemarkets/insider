@@ -236,24 +236,37 @@ Once, before the first release from the workflow:
    and never on a path.
 2. Merge it. The workflow reads the version and asks Hex which package
    lacks it. It refuses a version that is not greater than every release of
-   that package on Hex, by SemVer precedence. A pre-release such as
-   `0.2.0-rc.1` follows the same steps. A change to a `mix.exs` that keeps
-   the version publishes nothing.
+   that package on Hex, by SemVer precedence, and checks again just before
+   it publishes each package. A pre-release such as `0.2.0-rc.1` follows the
+   same steps. A change to a `mix.exs` that keeps the version publishes
+   nothing.
 3. The workflow publishes `insider`. Approve it on hex.pm, under Staged
    releases in the dashboard, within 60 minutes. Approve the core first:
    the Lab resolves `insider` from Hex, so the workflow publishes
    `insider_lab` only once the core is available. Then approve the Lab the
    same way.
-4. With both packages on Hex, the workflow tags the published commit
-   `vVERSION` and pushes the tag. Hexdocs source links point at it.
+4. With both packages on Hex, a separate job tags the published commit
+   `vVERSION` through the GitHub API. It is the only job that can write to
+   the repository, and it runs no project or dependency code. Hexdocs source
+   links point at the tag.
 
 ### Retry a release
 
 Each step of the workflow looks at Hex and at the tags before it acts. When
 a run fails, or its 60 minutes pass before an approval, fix the cause or
-approve the staged release. Then run the workflow on `main` from the Actions
-tab ("Run workflow"), or with `gh workflow run release.yml --ref main`. The
-run publishes what is still missing, waits, and tags.
+approve the staged release, then run it again. The run publishes what is
+still missing, waits, and tags.
+
+- **Re-run the failed jobs** of the original run from its page in the
+  Actions tab. A re-run keeps that run's commit. Use it whenever `main` has
+  moved since.
+- **Run the workflow** on `main` from the Actions tab ("Run workflow"), or
+  with `gh workflow run release.yml --ref main`. This uses the newest commit
+  on `main`.
+
+Both packages come from one commit. When the core is on Hex from an earlier
+commit and only the Lab is missing, a run on a newer commit refuses to
+publish the Lab. Re-run the original run, or release a new version.
 
 A release that waits for approval is not on Hex yet, so a rerun stages it
 again. Approve the newest staged release. A staged release expires after
