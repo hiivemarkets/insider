@@ -395,6 +395,7 @@ defmodule Insider.LiveTest do
       Live.start(%{"components" => ["system_monitor"]}),
       Live.start(%{"components" => []}),
       Live.start(%{"unknown" => true}),
+      # Without Telemetry defaults on this node, telemetry alone records nothing.
       Live.start(%{"components" => ["telemetry"]}),
       Live.start(%{"log_payload" => true, "components" => ["logger"]}),
       Live.start(%{"lease_ms" => 10}),

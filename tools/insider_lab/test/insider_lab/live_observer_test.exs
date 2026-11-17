@@ -903,6 +903,49 @@ defmodule Insider.Lab.LiveObserverTest do
         :peer.call(context.peer, Insider.Live, :stop, [started["result"]["session_id"]])
     end
 
+    # The quick start's start on a node without Phoenix, Oban, Absinthe,
+    # Bandit, Cowboy or a repository: every default is skipped and reported,
+    # never refused, and the session runs Logger alone. Explicit names are
+    # still checked.
+    test "start with logger and telemetry on a plain node skips the defaults it lacks", context do
+      {0, started} =
+        single([
+          "start"
+          | target(context.node, context.cookie_file, [
+              "--component",
+              "logger",
+              "--component",
+              "telemetry"
+            ])
+        ])
+
+      result = started["result"]
+      assert result["components"] == ["logger"]
+      assert result["telemetry_events"] == []
+
+      assert %{"event" => "phoenix.endpoint.stop", "reason" => "not_on_target"} in result[
+               "telemetry_skipped_defaults"
+             ]
+
+      assert result["telemetry_hint"] ==
+               "no default Telemetry events exist on this node; pass --telemetry-event or use discover"
+
+      {:ok, _stopped} = :peer.call(context.peer, Insider.Live, :stop, [result["session_id"]])
+
+      {1, refused} =
+        single([
+          "start"
+          | target(context.node, context.cookie_file, [
+              "--component",
+              "telemetry",
+              "--telemetry-event",
+              "insider_lab_never_an_atom_q9z.stop"
+            ])
+        ])
+
+      assert refused["error"]["code"] == "unknown_telemetry_event"
+    end
+
     test "discover lists the target's events and start subscribes to a discovered prefix",
          context do
       for segment <- ["insider_lab", "discover", "one", "two"],

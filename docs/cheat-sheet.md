@@ -49,7 +49,9 @@ See [Live observation](live/live-api-and-transports.md#live-observation) and
 [Lease](live/live-api-and-transports.md#lease).
 
 ```sh
-# Record Logger, OpenTelemetry, and Telemetry events
+# Record Logger and Telemetry events (the default events this node has)
+mix insider.live start "${N[@]}" --component logger --component telemetry --logger-level info
+# Add OpenTelemetry spans when the node runs the OpenTelemetry SDK
 mix insider.live start "${N[@]}" --component logger --component otel --component telemetry --logger-level info
 # State, lease, readers, and recording options
 mix insider.live status "${N[@]}" --session SESSION_ID

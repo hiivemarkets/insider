@@ -54,6 +54,7 @@ defmodule Insider.Live.Filters do
   @duration_scopes ["handler", "caller"]
   @max_domain_segments 8
   @max_repos 8
+  @no_defaults_hint "no default Telemetry events exist on this node; pass --telemetry-event or use discover"
   @segment ~r/\A[a-z][a-z0-9_]*\z/
   @module_name ~r/\A[A-Za-z][A-Za-z0-9_]*(\.[A-Z][A-Za-z0-9_]*)*\z/
   # Events that stand for one unit of work (a request, a job) are recorded
@@ -122,15 +123,41 @@ defmodule Insider.Live.Filters do
   the applications that are loaded.
   """
   @spec default_telemetry_events() :: [[String.t()]]
-  def default_telemetry_events do
-    known =
-      for {application, segments} <- @known_events,
-          loaded?(application),
-          existing?(segments),
-          do: segments
+  def default_telemetry_events, do: elem(telemetry_defaults(), 0)
 
-    Enum.uniq(repo_events() ++ known)
+  @doc """
+  The quiet default Telemetry events split by whether this node has them:
+  `{recorded, skipped}`. A default is skipped when its application is not
+  loaded or one of its segments is not already an atom here, so a session
+  that records the defaults never creates an atom and never refuses one.
+  `skipped_defaults/1` describes the skipped ones.
+  """
+  @spec telemetry_defaults() :: {[[String.t()]], [[String.t()]]}
+  def telemetry_defaults do
+    {repos, missing_repos} = repo_events()
+
+    {known, missing} =
+      Enum.split_with(@known_events, fn {application, segments} ->
+        loaded?(application) and existing?(segments)
+      end)
+
+    {Enum.uniq(repos ++ Enum.map(known, &elem(&1, 1))),
+     Enum.uniq(missing_repos ++ Enum.map(missing, &elem(&1, 1)))}
   end
+
+  @doc """
+  The skipped defaults as a start or amendment result lists them under
+  `"telemetry_skipped_defaults"`: each event's dotted name and the reason.
+  """
+  @spec skipped_defaults([[String.t()]]) :: [map()]
+  def skipped_defaults(skipped) do
+    for segments <- skipped,
+        do: %{"event" => Enum.join(segments, "."), "reason" => "not_on_target"}
+  end
+
+  @doc "The one-line hint for a node where no default Telemetry event exists."
+  @spec no_defaults_hint() :: String.t()
+  def no_defaults_hint, do: @no_defaults_hint
 
   @doc """
   Validates the filter options. `components` are the session's component
@@ -710,15 +737,23 @@ defmodule Insider.Live.Filters do
   # Ecto's default prefix is the repository module's underscored segments
   # (`MyApp.Repo` emits `[:my_app, :repo, :query]`) unless the repository
   # configuration sets `:telemetry_prefix`. Only application configuration
-  # is read, so no repository callback runs.
+  # is read, so no repository callback runs. Returns `{found, missing}`:
+  # the query events whose atoms exist, and those whose atoms do not, each
+  # at most `@max_repos`.
   defp repo_events do
     for {application, _description, _version} <- Application.loaded_applications(),
         repo <- configured_repos(application),
         segments <- repo_event(application, repo),
-        reduce: [] do
-      events -> if length(events) < @max_repos, do: events ++ [segments], else: events
+        reduce: {[], []} do
+      {found, missing} ->
+        if existing?(segments),
+          do: {bounded_append(found, segments), missing},
+          else: {found, bounded_append(missing, segments)}
     end
   end
+
+  defp bounded_append(events, segments),
+    do: if(length(events) < @max_repos, do: events ++ [segments], else: events)
 
   defp configured_repos(application) do
     case Application.get_env(application, :ecto_repos, []) do
@@ -744,8 +779,7 @@ defmodule Insider.Live.Filters do
     with segments when is_list(segments) and segments != [] <- segments,
          event = segments ++ ["query"],
          true <- length(event) <= @max_domain_segments,
-         true <- Enum.all?(event, &segment?/1),
-         true <- existing?(event) do
+         true <- Enum.all?(event, &segment?/1) do
       [event]
     else
       _invalid -> []

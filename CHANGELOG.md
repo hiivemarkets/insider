@@ -7,6 +7,22 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The quick start's `start --component logger --component telemetry` no
+  longer fails on a node without Phoenix, Oban, Absinthe, Bandit, Cowboy or
+  an Ecto repository, such as a new `mix new` app. In 0.1.0 it was refused
+  with `invalid_options` for `telemetry_events`. Without `--telemetry-event`,
+  a session now records the quiet default Telemetry events that exist on the
+  node and lists the others in the start and amend results under
+  `telemetry_skipped_defaults`, each with the reason `not_on_target`. When
+  none exists, the session runs without the telemetry component and the
+  result carries `telemetry_hint`. Telemetry alone with no default is still
+  `invalid_options`, now with the same hint. An explicit event name whose
+  atoms do not exist is still `unknown_telemetry_event`. The cheat sheet's
+  first start command no longer needs the OpenTelemetry SDK. See
+  `decisions/2026-11-17_live_start_skips_quiet_default_telemetry_events_the_node_lacks.md`.
+
 ## [0.1.0] - 2026-11-17
 
 The first release on Hex.

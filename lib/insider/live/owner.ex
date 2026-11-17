@@ -1622,6 +1622,7 @@ defmodule Insider.Live.Owner do
       filters: parsed.filters.config,
       components: Enum.map(parsed.components, &Atom.to_string/1),
       telemetry_events: parsed.telemetry_events,
+      telemetry_skipped_defaults: parsed.telemetry_skipped_defaults,
       telemetry_measurements: parsed.telemetry_measurements,
       disclosure: parsed.disclosure,
       max_events: parsed.max_events,
@@ -2302,11 +2303,25 @@ defmodule Insider.Live.Owner do
     session
     |> lease_status()
     |> Map.merge(configuration(session))
+    |> Map.merge(skipped_defaults(session))
     |> Map.merge(%{
       "schema" => "insider.live-session/v1",
       "cursor" => 0,
       "environment" => Atom.to_string(environment.environment)
     })
+  end
+
+  # The start and amendment results list the quiet default Telemetry events
+  # this node lacks, when the session asked for the defaults, and give a
+  # hint when none was left: the session then runs without the telemetry
+  # component. Not a configuration value: an amendment never counts it as
+  # changed.
+  defp skipped_defaults(%{telemetry_skipped_defaults: skipped, telemetry_events: events}) do
+    described = %{"telemetry_skipped_defaults" => Filters.skipped_defaults(skipped)}
+
+    if events == [] and skipped != [],
+      do: Map.put(described, "telemetry_hint", Filters.no_defaults_hint()),
+      else: described
   end
 
   # The Recorder's fill comes from the same health call: `next_receipt` is
@@ -2732,6 +2747,7 @@ defmodule Insider.Live.Owner do
     session
     |> lease_status()
     |> Map.merge(configuration(session))
+    |> Map.merge(skipped_defaults(session))
     |> Map.merge(%{"schema" => "insider.live-amendment/v1", "amendment" => amendment})
   end
 

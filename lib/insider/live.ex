@@ -151,10 +151,19 @@ defmodule Insider.Live do
   OpenTelemetry spans and needs the SDK on the node; default `["logger", "telemetry"]` when the node has quiet
   default Telemetry events, else `["logger"]`), `"telemetry_events"` (event
   names as lists of existing-atom strings, recorded with phase `:event`;
-  default: the quiet default events), `"telemetry_measurements"`
+  default: the quiet default events that exist on this node), `"telemetry_measurements"`
   (measurement names to project), `"disclosure"` (`"rich"` or `"strict"`, no richer than the host
   profile; default the host profile), `"max_events"`, and `"lease_ms"`.
   Logger message text and metadata are collected only in the rich profile.
+
+  With the telemetry component and without `"telemetry_events"`, a quiet
+  default whose application or atoms the node lacks is skipped, never
+  refused. The result lists each under `"telemetry_skipped_defaults"` as
+  `%{"event" => "phoenix.endpoint.stop", "reason" => "not_on_target"}`
+  (`[]` otherwise). When no default is left, the session runs without the
+  telemetry component and the result carries `"telemetry_hint"`. With no
+  other component, the start is `invalid_options`. An explicit name that is
+  not already an atom stays `unknown_telemetry_event`.
 
   A `"telemetry_events"` entry whose last segment is `"*"`, such as
   `["shop", "*"]`, is a prefix: it stands for every event name `discover/1`

@@ -375,6 +375,8 @@ A session started without options records:
 
 The session does not record every query or log line. It counts them (see [Filtered counts](#filtered-counts)).
 
+A start that asks for the telemetry component without naming events gets the defaults that exist on the node. It skips the rest and lists them under `telemetry_skipped_defaults` with the reason `not_on_target`. On a node with none, such as a new `mix new` app, the session runs the other requested components without telemetry, and the result says so in `telemetry_hint`. With no other component, the start is `invalid_options`.
+
 ### Record-time filters
 
 ```sh
