@@ -13,8 +13,11 @@ documentation tooling, and how to release Insider to Hex.
 - [Documentation](#documentation)
 - [Project documents](#project-documents)
 - [Releasing](#releasing)
-  - [The first release, by hand](#the-first-release-by-hand)
-  - [Later releases, from a tag](#later-releases-from-a-tag)
+  - [Set up publishing](#set-up-publishing)
+  - [Release a version](#release-a-version)
+  - [Retry a release](#retry-a-release)
+  - [Revert a release](#revert-a-release)
+  - [The first release](#the-first-release)
 
 ## Repository layout
 
@@ -33,7 +36,7 @@ documentation tooling, and how to release Insider to Hex.
 | `decisions/` | Append-only decision records. See [`decisions/README.md`](https://github.com/hiivemarkets/insider/blob/main/decisions/README.md). |
 | `fixtures/` | Reserved for faulty applications and paired healthy/failing scenarios. |
 | `LICENSES/`, `THIRD_PARTY_NOTICES.md` | License text for adapted third-party code and for recon, which the Lab observer can push into a target. The project license is `LICENSE` (MIT). The Lab keeps copies of `LICENSE` and the recon text for its own package. |
-| `.githooks/`, `.github/workflows/` | Local gates (activated by `mix setup`) and CI (`quality`, `load-soak`, and `release`, which publishes to Hex from a tag). |
+| `.githooks/`, `.github/workflows/` | Local gates (activated by `mix setup`) and CI (`quality`, `load-soak`, and `release`, which publishes a version bump on `main` to Hex). |
 
 - `tools/insider_lab/` holds `mix insider`, `mix insider.candidates`,
   `mix insider.oracle`, `mix insider.privacy_corpus`, `mix insider.live`, the
@@ -178,14 +181,15 @@ the same change.
 
 ## Releasing
 
-Insider publishes two Hex packages from one tag, at one version:
+Insider publishes two Hex packages at one version, tagged `vVERSION`:
 `insider` (the core, from the repository root) and `insider_lab` (the
 observer CLI, the Mix tasks and the escript, from `tools/insider_lab`). The
 Hex organization `clarity` owns both. It has one admin and owner for now.
 Add a second admin, who is also a package owner, so that releases and
 ownership do not depend on one account.
 `decisions/2026-11-16_insider_and_the_lab_publish_to_hex_under_an_organization.md`
-records why.
+and `decisions/2026-11-17_releases_publish_when_main_bumps_the_version.md`
+record why.
 
 In this repository the Lab depends on the core by path. A Hex package cannot
 carry a path dependency, so `INSIDER_LAB_HEX=1` builds the Lab's Hex form:
@@ -193,13 +197,32 @@ it depends on `insider` from Hex at the same version, with its own `deps/`
 and lockfile in `tools/insider_lab`. The unpacked package always uses the
 Hex form.
 
-Before a release:
+`.github/workflows/release.yml` publishes both packages when a push to
+`main` changes their version. It holds no Hex key. Each `mix hex.publish`
+exchanges a fresh GitHub OIDC token for a short-lived Hex key, through a
+workload identity (trusted publishing). Hex staged publishing holds every
+release until a maintainer with 2FA approves it on hex.pm. That approval is
+the human gate.
 
-1. Set the version in both `mix.exs` files (`@version`). A test checks that
-   they agree.
-2. Move the `[Unreleased]` entries of `CHANGELOG.md` under
-   `## [VERSION] - YYYY-MM-DD`, with the day you publish.
-3. Check both packages and their documentation:
+### Set up publishing
+
+Once, before the first release from the workflow:
+
+- An admin of the Hex organization `clarity`, with 2FA, adds an
+  organization workload identity with the `write` role. It covers the
+  public packages `insider` and `insider_lab`, and names the repository
+  `hiivemarkets/insider`, the workflow `release.yml` and the environment
+  `release`.
+- Create the GitHub environment `release` in the repository settings, with
+  a deployment branch rule that admits only `main`. Required reviewers are
+  optional. They would approve each run before it asks Hex for a key.
+
+### Release a version
+
+1. In one pull request, set `@version` in both `mix.exs` files and move the
+   `[Unreleased]` entries of `CHANGELOG.md` under
+   `## [VERSION] - YYYY-MM-DD`. A test checks that the two versions agree.
+   Check both packages and their documentation:
 
    ```sh
    mix hex.build
@@ -211,66 +234,55 @@ Before a release:
    Read the file lists and the dependencies. The core depends on `jason`
    and `telemetry` only. The Lab depends on `insider` and `recon` only,
    and never on a path.
-
-### The first release, by hand
-
-A Hex workload identity cannot create a package or publish its first
-release, so a maintainer publishes `0.1.0` from their own machine:
-
-1. Make the repository public. Hexdocs source links and the package links
-   point at it.
-2. Create the Hex user accounts, with 2FA on each, and the Hex organization `clarity`.
-   Run `mix hex.user auth` on the publishing machine.
-3. Tag the release commit `v0.1.0` and push the tag. Hexdocs source links
-   point at the tag. The tag also starts the release workflow, which cannot
-   publish a first release. If the `release` environment exists, its
-   reviewers reject that run.
-4. Publish the core, then the Lab, and give the Hex organization `clarity`
-   both packages:
-
-   ```sh
-   mix hex.publish
-   (cd tools/insider_lab && cp ../../mix.lock mix.lock && INSIDER_LAB_HEX=1 mix deps.get)
-   (cd tools/insider_lab && INSIDER_LAB_HEX=1 mix hex.publish)
-   mix hex.owner transfer insider clarity
-   mix hex.owner transfer insider_lab clarity
-   ```
-
-   The Lab resolves `insider` from Hex, so publish it after the core is
-   available. `mix hex.publish` asks for confirmation and publishes the
-   package and its documentation.
-5. Install from Hex in a fresh project: add `{:insider, "~> 0.1"}`, then run
-   `mix deps.get` and `mix compile`. Install the CLI with
-   `mix escript.install hex insider_lab` and run `insider-lab live --help`.
-
-For one hour after publishing, `mix hex.publish` can publish the same
-version again. Within that hour, `mix hex.publish --revert VERSION` removes
-it. After that, publish a new version.
-
-### Later releases, from a tag
-
-`.github/workflows/release.yml` publishes later releases. It holds no Hex
-key. It authenticates through a Hex workload identity (trusted publishing),
-and each `mix hex.publish` exchanges a fresh GitHub OIDC token for a
-short-lived Hex key. Set it up once:
-
-- An admin of the Hex organization `clarity`, with 2FA, adds a `write` workload identity.
-  It names this repository, `release.yml` and the GitHub environment
-  `release`.
-- Create the `release` environment in the repository settings, with
-  required reviewers.
-
-Then, for each release:
-
-1. Do the steps under "Before a release" and merge them.
-2. Tag the merge commit `vVERSION` and push the tag.
-3. A reviewer approves the `release` environment. The workflow checks that
-   the tag matches both versions and publishes `insider`.
-4. Staged publishing holds the release until a maintainer with 2FA approves
-   it in the Hex dashboard. The workflow waits up to 60 minutes for the
-   core release, then publishes `insider_lab`, which waits for approval the
+2. Merge it. The workflow reads the version and asks Hex which package
+   lacks it. It refuses a version that is not greater than every release of
+   that package on Hex, by SemVer precedence. A pre-release such as
+   `0.2.0-rc.1` follows the same steps. A change to a `mix.exs` that keeps
+   the version publishes nothing.
+3. The workflow publishes `insider`. Approve it on hex.pm, under Staged
+   releases in the dashboard, within 60 minutes. Approve the core first:
+   the Lab resolves `insider` from Hex, so the workflow publishes
+   `insider_lab` only once the core is available. Then approve the Lab the
    same way.
+4. With both packages on Hex, the workflow tags the published commit
+   `vVERSION` and pushes the tag. Hexdocs source links point at it.
 
-If the wait times out, approve the core release and publish the Lab by hand
-(step 4 of the first release). Revert a bad release within one hour with
-`mix hex.publish --revert VERSION`.
+### Retry a release
+
+Each step of the workflow looks at Hex and at the tags before it acts. When
+a run fails, or its 60 minutes pass before an approval, fix the cause or
+approve the staged release. Then run the workflow on `main` from the Actions
+tab ("Run workflow"), or with `gh workflow run release.yml --ref main`. The
+run publishes what is still missing, waits, and tags.
+
+A release that waits for approval is not on Hex yet, so a rerun stages it
+again. Approve the newest staged release. A staged release expires after
+seven days. The tag names the commit that Hex recorded for the core release,
+so a rerun after other merges still tags the published commit.
+
+### Revert a release
+
+Before approval, reject the staged release on hex.pm. For one hour after
+publishing, a maintainer reverts a release from their own account with 2FA
+(`mix hex.user auth`). The workflow cannot: staged publishing refuses a
+revert from a workload identity. Revert the Lab, which depends on the core,
+first:
+
+```sh
+(cd tools/insider_lab && INSIDER_LAB_HEX=1 mix hex.publish --revert VERSION)
+mix hex.publish --revert VERSION
+git push --delete origin vVERSION
+```
+
+After that hour, publish a new version. `main` still names the reverted
+version, so the next change to a `mix.exs` publishes it again. Merge the
+fix with a new version.
+
+### The first release
+
+A workload identity cannot create a package or publish its first release.
+A maintainer published `0.1.0` of both packages from their own account,
+tagged `v0.1.0` by hand, and gave both packages to the Hex organization `clarity`
+with `mix hex.owner transfer insider clarity` and
+`mix hex.owner transfer insider_lab clarity`. A new package needs the same
+steps before the workflow can publish it.
