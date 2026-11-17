@@ -68,6 +68,15 @@ The standalone dispatcher implements only `runtime.capabilities`. So callers
 can see that every other runtime operation is unavailable until a host injects
 an executor. This separates protocol membership from deployed availability.
 
+Every Lab Mix task (`mix insider`, `mix insider.candidates`,
+`mix insider.oracle`, `mix insider.privacy_corpus`, `mix insider.live`)
+compiles the Lab before it runs, with Mix's compiler progress and build-lock
+notices on stderr. Stdout carries only the task's own output, so it parses
+even on the first call after a source change. A tool that merges stderr into
+stdout sees those notices first, so it should run the escript, which starts
+no Mix. The escript runs on two schedulers that sleep rather than spin, so it
+starts quickly on a busy host.
+
 ### Envelope and budgets
 
 JSON input and output are limited to 16 MiB. JSON nesting is limited to depth

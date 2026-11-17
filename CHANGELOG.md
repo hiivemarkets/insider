@@ -23,6 +23,17 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first start command no longer needs the OpenTelemetry SDK. See
   `decisions/2026-11-17_live_start_skips_quiet_default_telemetry_events_the_node_lacks.md`.
 
+### Changed
+
+- The Lab README, the landing page of the Lab's hexdocs, is now a short
+  page: what the Lab is, the Hex install, a five-command quick start,
+  running from a checkout, and links to the reference on
+  insider.hexdocs.pm. The details it alone held moved into `docs/`: the Lab
+  Mix tasks' stdout and stderr and the escript's schedulers
+  (`docs/lab-cli.md`), the Lab's authority boundary
+  (`docs/architecture.md`), and where the oracle runner's bootstrap lives
+  (`docs/lab-candidates-and-oracles.md`).
+
 ## [0.1.0] - 2026-11-17
 
 The first release on Hex.

@@ -377,7 +377,8 @@ agents share:
 ```
 
 **Launch.** The task starts `mix test` in the target with `MIX_EXS` naming a
-fixed bootstrap file. The bootstrap compiles the target's own `mix.exs` and
+fixed bootstrap file (the bootstrap and the overlay live in the Lab's
+`priv/oracle_runner/`). The bootstrap compiles the target's own `mix.exs` and
 marks the host's `test` alias as already run. It puts a run-local overlay
 directory first in `:test_paths`. So no host `run` alias is involved, and the
 target's build is reused. The overlay's helper requires the host's helpers and

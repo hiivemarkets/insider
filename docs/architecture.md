@@ -136,3 +136,10 @@ The artifact gate builds a fresh production release, inventories its source,
 application, beam, and release contents, and boots the release to prove that
 Lab-only modules cannot load. The core and the Lab are separate Hex packages,
 and the core's package holds no Lab code.
+
+The Lab, installed from Hex or run from a checkout, grants no ambient
+provider, credential, repository, publication, or deployment authority.
+Trusted host configuration can enable sandbox providers and a draft-only
+provider with disclosure authorization. Draft effects are disabled by
+default, and these seams grant no merge or deployment authority. The Lab is
+not a staging or production authority boundary.
