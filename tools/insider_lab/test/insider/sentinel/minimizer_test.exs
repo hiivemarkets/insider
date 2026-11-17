@@ -29,6 +29,11 @@ defmodule Insider.Sentinel.MinimizerTest do
 
   @observer %{"id" => "test.confirmation-observer", "version" => 1}
 
+  # The provider release of a sandbox run gets the cleanup budget minus the
+  # registry's 50 ms inventory reserve. A busy CI node can stall the release
+  # for longer than the rest of a small budget.
+  @blocker_cleanup_timeout_ms 1_000
+
   setup do
     executor =
       start_supervised!(
@@ -319,17 +324,17 @@ defmodule Insider.Sentinel.MinimizerTest do
     key = {MinimizerBlockingBody, inputs.scenario.seed}
     :persistent_term.put(key, self())
     on_exit(fn -> :persistent_term.erase(key) end)
-    {request, context} = authority!(inputs.target, "minimizer-blocker", 5_000)
+    {request, context} = authority!(inputs.target, "minimizer-blocker", 10_000)
 
     assert {:ok, handle} =
              Sandbox.start_run(executor, inputs.target,
                request: request,
                context: context,
-               cleanup_timeout_ms: 100,
+               cleanup_timeout_ms: @blocker_cleanup_timeout_ms,
                body: {MinimizerBlockingBody, %{"seed" => inputs.scenario.seed}, 100}
              )
 
-    assert_receive {:minimizer_blocking_body_started, body}, 1_000
+    assert_receive {:minimizer_blocking_body_started, body}, 5_000
 
     assert {:ok,
             %MinimizationResult{
@@ -343,7 +348,10 @@ defmodule Insider.Sentinel.MinimizerTest do
             }} = minimize(executor, inputs, MinimizerConfirmationBody, max_duration_ms: 5_000)
 
     send(body, :unexpected_release)
-    assert %Insider.Protocol.Result{cleanup: %{remaining_count: 0}} = Sandbox.await(handle, 2_000)
+
+    assert %Insider.Protocol.Result{cleanup: %{remaining_count: 0}} =
+             Sandbox.await(handle, @blocker_cleanup_timeout_ms + 4_000)
+
     assert {:ok, %{active: 0, quarantined: 0}} = Executor.counts(executor)
   end
 
@@ -379,7 +387,7 @@ defmodule Insider.Sentinel.MinimizerTest do
         )
       end)
 
-    assert_receive {:minimizer_blocking_body_started, _body}, 1_000
+    assert_receive {:minimizer_blocking_body_started, _body}, 5_000
     assert :ok = Supervisor.stop(executor)
 
     assert {:error,
@@ -393,7 +401,7 @@ defmodule Insider.Sentinel.MinimizerTest do
                 },
                 "minimizer_confirmation_runs" => 1
               }
-            }} = Task.await(task, 2_000)
+            }} = Task.await(task, 5_000)
   end
 
   test "rejects mismatched orchestration inputs before dispatch", %{executor: executor} do

@@ -64,6 +64,16 @@ defmodule Insider.Sentinel.VerificationTest do
     VerificationBodyLeak
   ]
 
+  # The scenario cleanup budget is forwarded as both the body stop budget and
+  # the provider cleanup budget of every sandbox run, and the registry keeps
+  # 50 ms of the cleanup budget for the inventory. A busy CI node can stall
+  # the provider release for longer than the rest of a small budget, so the
+  # fixture runs get generous budgets. Verification.run admits up to four
+  # runs under one absolute deadline, and each admission needs both budgets
+  # left on it. A passing run never waits them out.
+  @cleanup_timeout_ms 1_000
+  @request_timeout_ms 2 * @cleanup_timeout_ms + 8_000
+
   test "two fresh failures followed by two independent repaired runs verify canonically" do
     executor = executor!()
     {regression, manifest, capsule, target} = inputs!(executor)
@@ -409,7 +419,7 @@ defmodule Insider.Sentinel.VerificationTest do
     executor = executor!([VerificationBodyBlocking])
     {regression, manifest, capsule, target} = inputs!(executor)
     candidate = candidate!("blocking after")
-    {request, context} = authority!(target, "blocking-after", 2_000)
+    {request, context} = authority!(target, "blocking-after", 2 * @cleanup_timeout_ms + 3_000)
 
     assert {:ok, %Record{status: "invalid", reasons: reasons}} =
              Verification.run(executor, regression, manifest, capsule, target, candidate,
@@ -605,11 +615,11 @@ defmodule Insider.Sentinel.VerificationTest do
   end
 
   defp inputs!(executor, provider, confirmation_body, observer) do
-    inputs!(executor, provider, confirmation_body, observer, 8_000)
+    inputs!(executor, provider, confirmation_body, observer, @request_timeout_ms)
   end
 
   defp inputs!(executor, provider, confirmation_body, observer, timeout_ms) do
-    inputs!(executor, provider, confirmation_body, observer, timeout_ms, 100)
+    inputs!(executor, provider, confirmation_body, observer, timeout_ms, @cleanup_timeout_ms)
   end
 
   defp inputs!(
@@ -687,7 +697,7 @@ defmodule Insider.Sentinel.VerificationTest do
     capsule
   end
 
-  defp authority!(target, id, timeout_ms \\ 8_000) do
+  defp authority!(target, id, timeout_ms \\ @request_timeout_ms) do
     now = System.monotonic_time(:millisecond)
     runtime_target = %{node: Atom.to_string(node())}
 

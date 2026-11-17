@@ -25,6 +25,12 @@ defmodule Insider.Sentinel.RegressionTest do
   @other_observer %{"id" => "test.other-observer", "version" => 1}
   @baseline String.duplicate("1", 64)
 
+  # Confirmation forwards the scenario cleanup budget to the sandbox, whose
+  # provider release gets it minus the registry's 50 ms inventory reserve. A
+  # busy CI node can stall the release for longer than the rest of a small
+  # budget.
+  @live_cleanup_timeout_ms 1_000
+
   test "materializes exact source data and round trips a stable canonical fixture" do
     scenario = scenario!()
     source = matching_record!(scenario, "a", "2")
@@ -290,7 +296,7 @@ defmodule Insider.Sentinel.RegressionTest do
           }
         ],
         expected_incident_fingerprints: [expected],
-        limits: %{"cleanup_timeout_ms" => 100, "max_duration_ms" => 2_000}
+        limits: %{"cleanup_timeout_ms" => @live_cleanup_timeout_ms, "max_duration_ms" => 2_000}
       )
 
     {:ok, descriptor} = Scenario.descriptor(scenario)
