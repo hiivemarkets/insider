@@ -7,6 +7,70 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-18
+
+A patch release for a first session with the observer: a reproduced
+failing request keeps its trace, a view narrows only its own read, the
+escript has top-level help, help and hints name the command you ran, and
+every document is shorter.
+
+### Fixed
+
+- Live keeps the traces of failed and slow requests by default, so `trace`
+  finds a request you just reproduced even after ordinary traffic evicted it
+  from the Recorder. In 0.1.2 only mutation traces were kept by default, and
+  only with the telemetry component, so a failing request's trace came back
+  empty unless you had set `--retain-traces` before reproducing it. With the
+  logger, telemetry or otel component, a trace with an error event, or with
+  a Telemetry or span duration of 500 ms or more, is now kept without
+  `--retain-traces`. Failed, slow and mutation traces each have their own
+  pool of 16, so a burst of failing background calls cannot push out a
+  mutation trace, and all three still go before what `--retain-traces` and
+  `trace --retain` keep. The lookback that holds a trace's earlier events
+  grows from 1,024 events and 1 MiB to 4,096 events and 4 MiB, so a large
+  request survives until its error or stop arrives. The `trace` text says
+  why (`Retained: kept because it failed`, `kept because it was slow
+  (≥ 500 ms)`), `retention.pinned` can be `failed` or `slow`, and
+  `status.retention` adds `keep_failed_and_slow`, `failed_traces`,
+  `slow_traces`, `failed_traces_max`, `slow_traces_max`, `slow_trace_ms`
+  and `lookback_bytes_max`.
+- A stored view no longer narrows later reads silently. Every result a
+  reader's stored view narrowed carries a top-level `stored_view` (reader,
+  view, events hidden, note), and the note is the first line of `--human`
+  text and of compact output. In 0.1.2 one `--view-min-severity warning` on
+  `events` hid 1,071 events from the same reader's later `trace`, and the
+  only notice was a line at the end of the read that stored it.
+- `mutations` now keeps (`--view-keep`) and clears (`--view-clear`) a
+  reader's stored view like every other read. Before, it ignored both.
+- `insider-lab` alone, `insider-lab --help`, `-h` and `help` print a short
+  help to stdout and exit 0: what the escript is, `live OPERATION`, the
+  `--discover`, `--json` and `--ndjson` modes, and `insider-lab live --help`
+  as the next step. Before, they printed a bare `usage` error. Any other
+  argument is still a `usage` error with exit 64, and it now names
+  `insider-lab --help` in a `help` field.
+- The observer's help, its usage and option errors, and the commands the
+  node prints (hints, `next` fields, `Next:` lines, the welcome's examples)
+  now name the form you ran: `insider-lab live` for the escript,
+  `mix insider.live` for the Mix task. Sentences about the Mix task itself
+  are left as written.
+
+### Changed
+
+- A `--view-*` flag (a read's `"view"`) now narrows only the read or watch
+  that gives it, even with `--reader`. To keep it as the reader's stored
+  view for later reads, add `--view-keep` (`"view_keep": true`); it needs
+  `--reader` and a view flag. `--view-clear` still clears the stored view,
+  and with other view flags still replaces it.
+- Observer documents carry a short `installation`: `same_build`,
+  `insider_version` and `insider_commit`. The whole installation report
+  (builds, action, pushed applications, environment, remedy) now comes only
+  with `capabilities`, a load or start, or a target running another build.
+  A `mark` shrinks from about 1.9 KB to about 0.5 KB.
+- The welcome quick start is attached once, to the first command that is
+  not a short receipt (`mark`, `amend`, `stop`, `renew`, `chart`,
+  `reports`). After delivery only `capabilities` carries the welcome
+  pointer; other commands carry no `welcome` key.
+
 ## [0.1.2] - 2026-11-18
 
 A documentation and packaging release: every entry point says which of the
