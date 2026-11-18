@@ -60,6 +60,8 @@ change belongs to before editing:
 - The repository is `hiivemarkets/insider`. The core and the Lab are
   published to Hex as `insider` and `insider_lab`. Publish only through
   [Releasing](docs/development.md#releasing), never from an agent session.
+  Merging a change to `@version` publishes both packages, so change it only
+  when a maintainer asks for a release.
 - Use the repository PR template for the final PR.
 - `.github/CODEOWNERS` names the owner who must review changes to agent
   authority, hooks, and workflows.

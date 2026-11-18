@@ -7,7 +7,7 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-17
+## [0.1.1] - 2026-11-18
 
 A patch release: the quick start works on an app without Phoenix.
 
@@ -48,6 +48,18 @@ A patch release: the quick start works on an app without Phoenix.
   (`docs/lab-cli.md`), the Lab's authority boundary
   (`docs/architecture.md`), and where the oracle runner's bootstrap lives
   (`docs/lab-candidates-and-oracles.md`).
+
+- The release workflow (`release.yml`) publishes when a push to `main`
+  changes the version in both `mix.exs` files, not on a pushed tag. It
+  publishes only the packages whose version Hex lacks, refuses a version
+  that is not greater than the releases on Hex, publishes both packages
+  from one commit, and waits for each staged release to be approved on
+  hex.pm. A separate job, the only one that can write to the repository
+  and one that runs no project code, then tags the published commit
+  `vVERSION`. Re-running a failed run or `workflow_dispatch` finishes a
+  failed or pending release. Hex staged-publishing approval replaces the
+  `release` environment's required reviewers as the human gate.
+  `docs/development.md` "Releasing" has the procedure.
 
 ## [0.1.0] - 2026-11-17
 

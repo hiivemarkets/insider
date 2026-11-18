@@ -1,6 +1,11 @@
 name: release
 
-# Publishes `insider`, then `insider_lab`, to Hex from a version tag.
+# Publishes `insider`, then `insider_lab`, to Hex when a push to `main`
+# changes their version, then tags the published commit `vVERSION`.
+# `check` reads the version of both packages and asks Hex and the remote what
+# is missing. `publish` and `tag` do only that, and every step looks again
+# before it acts, so a run started with workflow_dispatch finishes a release
+# that failed or waited too long for approval.
 #
 # The first release of each package is published by hand, because a Hex
 # workload identity cannot create a package or publish its first release.
@@ -10,73 +15,358 @@ name: release
 # exchanges a fresh GitHub OIDC token for a short-lived Hex key, through the
 # workload identity of the Hex organization `clarity`, which owns both
 # packages. The identity names this repository, this file and the `release`
-# environment. The environment's required reviewers approve the job before it
-# starts. Staged publishing then holds each release until a maintainer with
-# 2FA approves it on hex.pm.
+# environment, which admits only `main`. Staged publishing then holds each
+# release until a maintainer with 2FA approves it on hex.pm. That approval is
+# the human gate. Required reviewers on the environment would add a second
+# one before the job starts, and the workflow works either way.
+#
+# Only `tag` can write to the repository, and it runs no project or
+# dependency code: no checkout, no Elixir, only curl, jq and gh.
 
 on:
   push:
-    tags: ["v*"]
-
-concurrency:
-  group: release
-  cancel-in-progress: false
+    branches: [main]
+    paths:
+      - mix.exs
+      - tools/insider_lab/mix.exs
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  # Exits 1 unless the first argument is greater, by SemVer precedence, than
+  # every other argument.
+  GREATER_THAN_ALL: |
+    [version | releases] = System.argv()
+
+    case Enum.reject(releases, &(Version.compare(version, &1) == :gt)) do
+      [] -> :ok
+      not_older ->
+        IO.puts("#{version} is not greater than #{Enum.join(not_older, ", ")}")
+        System.halt(1)
+    end
+
 jobs:
+  check:
+    name: Check the version against Hex
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish_core: ${{ steps.hex.outputs.publish_core }}
+      publish_lab: ${{ steps.hex.outputs.publish_lab }}
+      publish: ${{ steps.hex.outputs.publish }}
+      tag_exists: ${{ steps.tag.outputs.tag_exists }}
+    steps:
+      - name: Refuse a ref other than main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          echo "::error::Releases publish from main only, not ${GITHUB_REF}."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Elixir's Version module compares versions by SemVer precedence.
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        with:
+          elixir-version: "1.20"
+          otp-version: "29"
+      - name: Read the version of both packages
+        id: version
+        run: |
+          set -euo pipefail
+          core_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)"
+          lab_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' tools/insider_lab/mix.exs)"
+          echo "insider ${core_version}, insider_lab ${lab_version}"
+          if [ -z "$core_version" ] || [ "$core_version" != "$lab_version" ]; then
+            echo "::error::Both mix.exs files must set the same @version."
+            exit 1
+          fi
+          echo "version=${core_version}" >> "$GITHUB_OUTPUT"
+      # A version Hex lacks is published only when it is greater than every
+      # release of that package, pre-releases included. `publish` checks
+      # again just before it publishes.
+      - name: Ask Hex which packages need the version
+        id: hex
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          publish=false
+          for entry in core:insider lab:insider_lab; do
+            key="${entry%%:*}"
+            package="${entry#*:}"
+            status="$(curl --silent --show-error --retry 3 --output /dev/null --write-out '%{http_code}' \
+              "https://hex.pm/api/packages/${package}/releases/${VERSION}")"
+            case "$status" in
+              200)
+                echo "${package} ${VERSION} is on Hex."
+                echo "publish_${key}=false" >> "$GITHUB_OUTPUT"
+                ;;
+              404)
+                releases_json="$(curl --silent --show-error --fail --retry 3 "https://hex.pm/api/packages/${package}")"
+                mapfile -t releases < <(jq --raw-output '.releases[].version' <<< "$releases_json")
+                if [ "${#releases[@]}" -eq 0 ]; then
+                  echo "::error::Hex lists no release of ${package}. Publish its first release by hand."
+                  exit 1
+                fi
+                if ! elixir -e "$GREATER_THAN_ALL" "$VERSION" "${releases[@]}"; then
+                  echo "::error::${package} ${VERSION} is not on Hex and is not greater than its releases there. Refusing to publish."
+                  exit 1
+                fi
+                echo "${package} ${VERSION} is not on Hex yet, or waits for approval."
+                echo "publish_${key}=true" >> "$GITHUB_OUTPUT"
+                publish=true
+                ;;
+              *)
+                echo "::error::hex.pm answered ${status} for ${package} ${VERSION}."
+                exit 1
+                ;;
+            esac
+          done
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+      - name: Look for the tag
+        id: tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PUBLISH: ${{ steps.hex.outputs.publish }}
+        run: |
+          set -euo pipefail
+          code=0
+          git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" > /dev/null || code=$?
+          case "$code" in
+            0) tag_exists=true ;;
+            2) tag_exists=false ;;
+            *)
+              echo "::error::git ls-remote failed with status ${code}."
+              exit 1
+              ;;
+          esac
+          echo "tag v${VERSION} exists: ${tag_exists}"
+          echo "tag_exists=${tag_exists}" >> "$GITHUB_OUTPUT"
+          if [ "$PUBLISH" = false ] && [ "$tag_exists" = true ]; then
+            echo "::notice::insider and insider_lab ${VERSION} are on Hex and tagged v${VERSION}. Nothing to release."
+          fi
+
   publish:
     name: Publish to Hex
+    needs: check
+    if: needs.check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
-    timeout-minutes: 90
+    # Two approvals can take up to 60 minutes each.
+    timeout-minutes: 150
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Workload identity needs OTP 27 or later.
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         with:
           elixir-version: "1.20"
           otp-version: "29"
-      - run: mix deps.get --check-locked
-      - name: Check that the tag names the version of both packages
+      - name: Fetch the locked dependencies
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          core_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' mix.exs)"
-          lab_version="$(sed -n 's/^  @version "\(.*\)"$/\1/p' tools/insider_lab/mix.exs)"
-          echo "tag ${GITHUB_REF_NAME}, insider ${core_version}, insider_lab ${lab_version}"
-          if [ "$tag_version" != "$core_version" ] || [ "$tag_version" != "$lab_version" ]; then
-            echo "::error::The tag ${GITHUB_REF_NAME} must be v plus the version in both mix.exs files."
+          set -euo pipefail
+          mix deps.get --check-locked
+      # Each publish step asks Hex again, inside this serialized job: a
+      # release that is on Hex is skipped, and a version that is not greater
+      # than every release is refused. A release that waits for approval is
+      # not on Hex, so publishing it again stages it again. Approve the
+      # newest staged release.
+      - name: Publish insider
+        id: core
+        if: needs.check.outputs.publish_core == 'true'
+        env:
+          PACKAGE: insider
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --retry 3 --output /dev/null --write-out '%{http_code}' \
+            "https://hex.pm/api/packages/${PACKAGE}/releases/${VERSION}")"
+          case "$status" in
+            200)
+              echo "${PACKAGE} ${VERSION} is already on Hex."
+              exit 0
+              ;;
+            404) ;;
+            *)
+              echo "::error::hex.pm answered ${status} for ${PACKAGE} ${VERSION}."
+              exit 1
+              ;;
+          esac
+          releases_json="$(curl --silent --show-error --fail --retry 3 "https://hex.pm/api/packages/${PACKAGE}")"
+          mapfile -t releases < <(jq --raw-output '.releases[].version' <<< "$releases_json")
+          if [ "${#releases[@]}" -eq 0 ] || ! elixir -e "$GREATER_THAN_ALL" "$VERSION" "${releases[@]}"; then
+            echo "::error::${PACKAGE} ${VERSION} is not greater than its releases on Hex. Refusing to publish."
             exit 1
           fi
-          echo "VERSION=${tag_version}" >> "$GITHUB_ENV"
-      - name: Publish insider
-        run: mix hex.publish --yes
+          mix hex.publish --yes
+          echo "published=true" >> "$GITHUB_OUTPUT"
       # The Lab depends on `insider ~> VERSION` from Hex, so it can only
       # resolve after the core release is approved and available.
-      - name: Wait until insider ${{ env.VERSION }} is on Hex
+      - name: Wait until insider ${{ needs.check.outputs.version }} is on Hex
+        env:
+          PACKAGE: insider
         run: |
-          url="https://hex.pm/api/packages/insider/releases/${VERSION}"
-          for _attempt in $(seq 1 120); do
+          set -euo pipefail
+          url="https://hex.pm/api/packages/${PACKAGE}/releases/${VERSION}"
+          for attempt in $(seq 1 120); do
             if curl --silent --fail --output /dev/null "$url"; then
-              echo "insider ${VERSION} is on Hex."
+              echo "${PACKAGE} ${VERSION} is on Hex."
               exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "::notice::${PACKAGE} ${VERSION} waits for approval. A maintainer with 2FA approves it under Staged releases on hex.pm. Waiting up to 60 minutes."
             fi
             sleep 30
           done
-          echo "::error::insider ${VERSION} did not appear on Hex within 60 minutes. Approve the staged release, then publish insider_lab by hand."
+          echo "::error::${PACKAGE} ${VERSION} is not on Hex after 60 minutes. Approve the staged release on hex.pm (https://hex.pm/dashboard/staged-releases/hexpm/${PACKAGE}/${VERSION}), then re-run this run's failed jobs, or run this workflow on main with workflow_dispatch if nothing merged since."
           exit 1
       # INSIDER_LAB_HEX=1 makes the Lab depend on the core from Hex, not by
       # path, with its own deps and lockfile. The root lockfile seeds that
       # lockfile, so the shared dependencies keep their locked versions.
+      # Both packages come from one commit: a core that an earlier run
+      # published from another commit refuses the Lab.
       - name: Publish insider_lab
+        if: needs.check.outputs.publish_lab == 'true'
         working-directory: tools/insider_lab
         env:
+          PACKAGE: insider_lab
           INSIDER_LAB_HEX: "1"
+          CORE_PUBLISHED_HERE: ${{ steps.core.outputs.published == 'true' }}
         run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --retry 3 --output /dev/null --write-out '%{http_code}' \
+            "https://hex.pm/api/packages/${PACKAGE}/releases/${VERSION}")"
+          case "$status" in
+            200)
+              echo "${PACKAGE} ${VERSION} is already on Hex."
+              exit 0
+              ;;
+            404) ;;
+            *)
+              echo "::error::hex.pm answered ${status} for ${PACKAGE} ${VERSION}."
+              exit 1
+              ;;
+          esac
+          if [ "$CORE_PUBLISHED_HERE" != true ]; then
+            core_json="$(curl --silent --show-error --fail --retry 3 "https://hex.pm/api/packages/insider/releases/${VERSION}")"
+            core_sha="$(jq --raw-output '.oidc_claims.sha // empty' <<< "$core_json")"
+            if [ "$core_sha" != "$GITHUB_SHA" ]; then
+              echo "::error::insider ${VERSION} on Hex was published from commit ${core_sha:-unknown}, not ${GITHUB_SHA}. Re-run the jobs of the run that published it, which keeps its commit, or release a new version."
+              exit 1
+            fi
+          fi
+          releases_json="$(curl --silent --show-error --fail --retry 3 "https://hex.pm/api/packages/${PACKAGE}")"
+          mapfile -t releases < <(jq --raw-output '.releases[].version' <<< "$releases_json")
+          if [ "${#releases[@]}" -eq 0 ] || ! elixir -e "$GREATER_THAN_ALL" "$VERSION" "${releases[@]}"; then
+            echo "::error::${PACKAGE} ${VERSION} is not greater than its releases on Hex. Refusing to publish."
+            exit 1
+          fi
           cp ../../mix.lock mix.lock
           mix deps.get
           mix hex.publish --yes
+      - name: Wait until insider_lab ${{ needs.check.outputs.version }} is on Hex
+        env:
+          PACKAGE: insider_lab
+        run: |
+          set -euo pipefail
+          url="https://hex.pm/api/packages/${PACKAGE}/releases/${VERSION}"
+          for attempt in $(seq 1 120); do
+            if curl --silent --fail --output /dev/null "$url"; then
+              echo "${PACKAGE} ${VERSION} is on Hex."
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "::notice::${PACKAGE} ${VERSION} waits for approval. A maintainer with 2FA approves it under Staged releases on hex.pm. Waiting up to 60 minutes."
+            fi
+            sleep 30
+          done
+          echo "::error::${PACKAGE} ${VERSION} is not on Hex after 60 minutes. Approve the staged release on hex.pm (https://hex.pm/dashboard/staged-releases/hexpm/${PACKAGE}/${VERSION}), then re-run this run's failed jobs, or run this workflow on main with workflow_dispatch if nothing merged since."
+          exit 1
+
+  # The only job that can write to the repository. It checks nothing out and
+  # runs no project or dependency code, so nothing a build plants can reach
+  # its token. It also runs alone when both packages are on Hex and only the
+  # tag is missing.
+  tag:
+    name: Tag the release
+    needs: [check, publish]
+    if: >-
+      !cancelled() && needs.check.result == 'success'
+      && needs.check.outputs.tag_exists == 'false'
+      && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The tag names the commit that Hex recorded for the core release, else
+      # this run's commit. That commit must be on main and carry the version
+      # in both mix.exs files. Hexdocs source links point at the tag. A tag
+      # created with GITHUB_TOKEN starts no workflow.
+      - name: Tag v${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          api="repos/${GITHUB_REPOSITORY}"
+          existing="$(gh api "${api}/git/matching-refs/tags/${tag}" \
+            --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha")"
+          if [ -n "$existing" ]; then
+            echo "${tag} already exists."
+            exit 0
+          fi
+          for package in insider insider_lab; do
+            if ! curl --silent --fail --retry 3 --output /dev/null "https://hex.pm/api/packages/${package}/releases/${VERSION}"; then
+              echo "::error::${package} ${VERSION} is not on Hex. The tag follows the release."
+              exit 1
+            fi
+          done
+          core_json="$(curl --silent --show-error --fail --retry 3 "https://hex.pm/api/packages/insider/releases/${VERSION}")"
+          sha="$(jq --raw-output '.oidc_claims.sha // empty' <<< "$core_json")"
+          sha="${sha:-$GITHUB_SHA}"
+          relation="$(gh api "${api}/compare/${sha}...main" --jq .status)"
+          if [ "$relation" != ahead ] && [ "$relation" != identical ]; then
+            echo "::error::Commit ${sha} is not on main (${relation}). Tag it by hand."
+            exit 1
+          fi
+          for file in mix.exs tools/insider_lab/mix.exs; do
+            found="$(gh api --header "Accept: application/vnd.github.raw+json" "${api}/contents/${file}?ref=${sha}" \
+              | sed -n 's/^  @version "\(.*\)"$/\1/p')"
+            if [ "$found" != "$VERSION" ]; then
+              echo "::error::${file} at ${sha} has version ${found:-none}, not ${VERSION}. Tag it by hand."
+              exit 1
+            fi
+          done
+          tag_object="$(gh api --method POST "${api}/git/tags" \
+            -f tag="$tag" \
+            -f message="Insider ${VERSION}" \
+            -f object="$sha" \
+            -f type=commit \
+            -f "tagger[name]=github-actions[bot]" \
+            -f "tagger[email]=41898282+github-actions[bot]@users.noreply.github.com" \
+            --jq .sha)"
+          gh api --method POST "${api}/git/refs" -f ref="refs/tags/${tag}" -f sha="$tag_object" --silent
+          echo "::notice::Tagged ${sha} ${tag}."

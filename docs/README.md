@@ -116,7 +116,7 @@ observation stay denied.
 | Know what the roadmap plans | [Roadmap](status-and-roadmap.md#roadmap) | ~26 lines |
 | Contribute code | [Checks and gates](development.md#checks-and-gates) and [Repository layout](development.md#repository-layout), after [`AGENTS.md`](../AGENTS.md) | ~49 + ~27 lines |
 | Find load and soak evidence | [Synthetic load and soak evidence](development.md#synthetic-load-and-soak-evidence) | ~22 lines |
-| Release a version to Hex | [Releasing](development.md#releasing) | ~98 lines |
+| Release a version to Hex | [Releasing](development.md#releasing) | ~120 lines |
 
 ## Files
 
@@ -138,7 +138,7 @@ observation stay denied.
 | [Sentinel and the proof workflow](sentinel-and-proof-workflow.md) | Confirmation, verification, regression, minimization, bisection, the offline repair chain, and deduplication. | ~600 lines |
 | [Incident capsules and provenance](incident-capsules-and-provenance.md) | Capsules, provenance, and the inert observability trigger and export. | ~115 lines |
 | [Architecture](architecture.md) | Purpose and the intended loop, the trust boundary, module boundaries, and the production artifact boundary. | ~140 lines |
-| [Development](development.md) | Repository layout, checks and gates, load and soak evidence, documentation tooling, and releasing to Hex. | ~276 lines |
+| [Development](development.md) | Repository layout, checks and gates, load and soak evidence, documentation tooling, and releasing to Hex. | ~302 lines |
 | [Status and roadmap](status-and-roadmap.md) | What is implemented, as tables, and the roadmap phases. | ~220 lines |
 
 ## Other documents

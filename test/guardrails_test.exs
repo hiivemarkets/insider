@@ -168,25 +168,46 @@ defmodule Insider.GuardrailsTest do
     refute workflow =~ "- run: mix test\n"
   end
 
-  # Releases publish from a tag through a Hex workload identity, which a
-  # GitHub Environment with reviewers protects. No stored key may stand in.
-  test "the release workflow publishes from a tag in the release environment, without a stored key" do
+  # Releases publish when `main` bumps the version, through a Hex workload
+  # identity bound to the `release` environment, and Hex staged publishing
+  # holds each one for approval. No stored key may stand in, and no tag
+  # starts a release. Only the tag job can write, and it runs no project or
+  # dependency code.
+  test "the release workflow publishes a version bump on main in the release environment, without a stored key" do
     workflow = File.read!(Path.join([@root, ".github", "workflows", "release.yml"]))
 
     for expected <- [
-          ~s(tags: ["v*"]),
+          "branches: [main]",
+          "- mix.exs\n",
+          "- tools/insider_lab/mix.exs\n",
+          "workflow_dispatch:",
           "environment: release",
           "id-token: write",
-          "contents: read",
+          "cancel-in-progress: false",
+          "mix deps.get --check-locked",
           "mix hex.publish --yes",
           "INSIDER_LAB_HEX: \"1\"",
-          "https://hex.pm/api/packages/insider/releases/"
+          "https://hex.pm/api/packages/${package}/releases/${VERSION}",
+          "https://hex.pm/api/packages/${PACKAGE}/releases/${VERSION}",
+          "Version.compare",
+          ".oidc_claims.sha"
         ] do
       assert workflow =~ expected
     end
 
+    refute workflow =~ "tags:"
     refute workflow =~ "secrets."
     refute workflow =~ "HEX_API_KEY"
+
+    [before_tag, tag_job] = String.split(workflow, "\n  tag:\n")
+    refute before_tag =~ "contents: write"
+    assert tag_job =~ "contents: write"
+    assert tag_job =~ "/git/tags"
+    assert tag_job =~ "/git/refs"
+
+    for forbidden <- ["id-token", "environment:", "uses:", "mix ", "elixir"] do
+      refute tag_job =~ forbidden, "the tag job must not contain #{inspect(forbidden)}"
+    end
   end
 
   test "pre-commit orchestrates every fast check and propagates failure" do
