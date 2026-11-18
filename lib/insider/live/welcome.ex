@@ -374,6 +374,9 @@ defmodule Insider.Live.Welcome do
   # observer's `help` text; a Lab test parses every example with the
   # observer's own parser, so an example that no longer parses fails it.
   @observer_target_flags ["--cookie-file", "--force-load", "--load", "--node", "--timeout-ms"]
+  # Short receipts of an action: they neither carry nor deliver the welcome
+  # quick start. The observer's delivery reads this list.
+  @observer_receipts ["mark", "amend", "stop", "renew", "chart", "reports", "reports submit"]
   # The recording flags `start` takes and `amend` changes.
   @recording_flags [
     "--calls",
@@ -1656,6 +1659,10 @@ defmodule Insider.Live.Welcome do
   @spec observer_target_flags() :: [String.t()]
   def observer_target_flags, do: @observer_target_flags
 
+  @doc "The observer commands that neither carry nor deliver the welcome quick start."
+  @spec observer_receipts() :: [String.t()]
+  def observer_receipts, do: @observer_receipts
+
   @doc "The observer's error codes: code => {status, message}."
   @spec observer_errors() :: %{String.t() => {String.t(), String.t()}}
   def observer_errors, do: @observer_errors
@@ -2455,8 +2462,12 @@ defmodule Insider.Live.Welcome do
             "events and watch take --format: json (default) drops the event envelope fields that are null, empty, or the same for every event; full prints events as the target returns them; " <>
             "compact prints one line per event and one line starting with # per batch (next_cursor, truncation, disclosure profile, gaps, filtered), while errors stay JSON. " <>
             "digest --human prints plain text; it neither carries nor delivers the welcome. " <>
-            "The first command run against a target node carries the welcome quick start under \"welcome\" (a compact read prints a # line naming the welcome command instead); later ones carry a pointer with the delivered hash. " <>
-            "Delivery is recorded per node name and distribution creation, which changes when the node restarts, in the observer's reports directory, which every observer on this machine shares; printing welcome counts as delivery.",
+            "The first command run against a target node carries the welcome quick start under \"welcome\" (a compact read prints a # line naming the welcome command instead), " <>
+            "unless it is a receipt (#{Enum.join(@observer_receipts, ", ")}): receipts never carry it, and the next other command does. " <>
+            "After delivery only capabilities carries a pointer with the delivered hash; other commands carry no welcome. " <>
+            "Delivery is recorded per node name and distribution creation, which changes when the node restarts, in the observer's reports directory, which every observer on this machine shares; printing welcome counts as delivery. " <>
+            "installation is the whole report (builds, action, pushed applications, environment, remedy) on capabilities, after a load, and while the target runs another build; " <>
+            "every other document carries only same_build, insider_version and insider_commit.",
         "setup" => "N=(#{@target_placeholder})",
         "examples" => [
           "#{@observer_command} welcome \"${N[@]}\"",

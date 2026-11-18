@@ -261,6 +261,9 @@ defmodule Insider.Lab.Live.CLI do
   @codes Welcome.observer_errors()
   @quick_start_schema Welcome.quick_start_schema()
   @welcome_schemas [Welcome.schema(), Welcome.quick_start_schema()]
+  # Short receipts of an action, which neither carry nor deliver the welcome
+  # quick start: a first command among them leaves it for the next one.
+  @receipts Welcome.observer_receipts()
 
   @doc false
   @spec switches() :: keyword()
@@ -1298,6 +1301,7 @@ defmodule Insider.Lab.Live.CLI do
          {:ok, command} <- active_session(node, command) do
       command = %{command | incarnation: incarnation(node, command.timeout_ms)}
       command = %{command | welcome: connection_welcome(node, command)}
+      installation = Installation.for_operation(installation, command.operation)
       {:observed, perform(node, command, installation, writer), command}
     end
   end
@@ -1351,12 +1355,16 @@ defmodule Insider.Lab.Live.CLI do
     end
   end
 
-  # The first command run against a target node carries the target's
-  # welcome quick start under `"welcome"`, inside the one JSON document the
-  # command prints; later ones carry a pointer with the hash that was
-  # delivered. `welcome` itself needs neither. If the document cannot be
-  # read, the pointer still says how to read it.
-  defp connection_welcome(_node, %{operation: "welcome"}), do: nil
+  # The first command run against a target node that is not a receipt (nor
+  # `welcome` itself, which needs none) carries the target's welcome quick
+  # start under `"welcome"`, inside the one JSON document the command prints.
+  # Once it was delivered, only `capabilities`, the discovery command, carries
+  # a pointer with the hash that was delivered; other commands carry nothing.
+  # If the document cannot be read, or the delivery cannot be recorded, the
+  # pointer still says how to read it.
+  defp connection_welcome(_node, %{operation: operation})
+       when operation == "welcome" or operation in @receipts,
+       do: nil
 
   defp connection_welcome(node, %{incarnation: creation} = command) when is_integer(creation) do
     directory = command.environment.reports_directory
@@ -1367,11 +1375,17 @@ defmodule Insider.Lab.Live.CLI do
            Observer.call(node, Insider.Live, :welcome, [], command.timeout_ms) do
       {:document, welcome}
     else
-      delivered -> {:pointer, welcome_pointer(delivered)}
+      delivered when is_binary(delivered) -> delivered_welcome(command, delivered)
+      _unreadable -> {:pointer, welcome_pointer(nil)}
     end
   end
 
   defp connection_welcome(_node, _command), do: {:pointer, welcome_pointer(nil)}
+
+  defp delivered_welcome(%{operation: "capabilities"}, delivered),
+    do: {:pointer, welcome_pointer(delivered)}
+
+  defp delivered_welcome(_command, _delivered), do: nil
 
   defp welcome_pointer(delivered) do
     hash = if is_binary(delivered), do: delivered

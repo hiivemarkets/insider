@@ -295,7 +295,7 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
     assert after_delivery["welcome"]["delivered"] == true
   end
 
-  test "the first command against a target carries the quick start, later ones a pointer",
+  test "the first command against a target carries the quick start, later ones none",
        context do
     {0, first} = run(["capabilities" | target(context)], context)
 
@@ -317,18 +317,88 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
 
     {1, second} = run(["status", "--session", "live-none" | target(context)], context)
     assert second["error"]["code"] == "unknown_session"
+    refute Map.has_key?(second, "welcome")
+
+    # Only capabilities, the discovery command, keeps a pointer with the
+    # delivered hash.
+    {0, third} = run(["capabilities" | target(context)], context)
 
     assert %{"delivered" => true, "hash" => hash, "read_with" => %{"observer" => _}} =
-             second["welcome"]
+             third["welcome"]
 
     assert hash == first["welcome"]["hash"]
     # The pointer advertises the schema its read command returns.
-    assert second["welcome"]["schema"] == first["welcome"]["schema"]
-    assert second["welcome"]["full_reference"]["schema"] == "insider.live-welcome/v2"
-    refute Map.has_key?(second["welcome"], "quick_start")
+    assert third["welcome"]["schema"] == first["welcome"]["schema"]
+    assert third["welcome"]["full_reference"]["schema"] == "insider.live-welcome/v2"
+    refute Map.has_key?(third["welcome"], "quick_start")
 
     {0, explicit} = run(["welcome" | target(context)], context)
     refute Map.has_key?(explicit, "welcome")
+  end
+
+  test "receipts neither carry nor deliver the quick start, and carry a short installation",
+       context do
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    try do
+      session = ["--session", id | target(context)]
+
+      # A receipt as the first command: no welcome, and nothing delivered.
+      for receipt <- [["mark", "--label", "first"], ["renew"], ["amend", "--component", "logger"]] do
+        {0, document} = run(receipt ++ session, context)
+        refute Map.has_key?(document, "welcome"), "#{hd(receipt)} carried a welcome"
+        assert_short_installation(document)
+      end
+
+      # The next command that needs it carries the quick start.
+      {0, read} = run(["events", "--cursor", "0" | session], context)
+
+      assert %{"schema" => "insider.live-welcome-quick-start/v1", "quick_start" => _} =
+               read["welcome"]
+
+      assert_short_installation(read)
+
+      # After delivery, neither receipts nor reads carry a welcome or a pointer.
+      for later <- [
+            ["mark", "--label", "after"],
+            ["amend", "--component", "logger"],
+            ["events", "--cursor", "latest"]
+          ] do
+        {0, document} = run(later ++ session, context)
+        refute Map.has_key?(document, "welcome"), "#{hd(later)} carried a welcome"
+        assert_short_installation(document)
+      end
+
+      # capabilities keeps its pointer and the full installation.
+      {0, capabilities} = run(["capabilities" | target(context)], context)
+      assert %{"delivered" => true, "hash" => hash} = capabilities["welcome"]
+      assert hash == read["welcome"]["hash"]
+
+      assert %{"action" => "none", "same_build" => true, "observer_build" => _} =
+               capabilities["installation"]
+
+      {0, stopped} = run(["stop" | session], context)
+      refute Map.has_key?(stopped, "welcome")
+      assert_short_installation(stopped)
+    after
+      :peer.call(context.peer, Insider.Live, :stop, [id, %{"force" => true}])
+    end
+  end
+
+  # Every observer document but capabilities, a load, or another build
+  # carries only this summary of the installation.
+  defp assert_short_installation(document) do
+    installation = document["installation"]
+
+    assert Enum.sort(Map.keys(installation)) == [
+             "insider_commit",
+             "insider_version",
+             "same_build"
+           ]
+
+    assert installation["same_build"] == true
+    assert installation["insider_commit"] == Insider.Live.Revision.commit()
   end
 
   test "after welcome, the next command carries only a pointer", context do
