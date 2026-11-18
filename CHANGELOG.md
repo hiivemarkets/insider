@@ -7,7 +7,47 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-18
+
+A patch release: the quick start works on an app without Phoenix.
+
+### Fixed
+
+- The quick start's `start --component logger --component telemetry` no
+  longer fails on a node without Phoenix, Oban, Absinthe, Bandit, Cowboy or
+  an Ecto repository, such as a new `mix new` app. In 0.1.0 it was refused
+  with `invalid_options` for `telemetry_events`. Without `--telemetry-event`,
+  a session now records the quiet default Telemetry events that exist on the
+  node and lists the others in the start and amend results under
+  `telemetry_skipped_defaults`, each with the reason `not_on_target`. When
+  none exists, the session runs without the telemetry component and the
+  result carries `telemetry_hint`. Telemetry alone with no default is still
+  `invalid_options`, now with the same hint. An explicit event name whose
+  atoms do not exist is still `unknown_telemetry_event`. The cheat sheet's
+  first start command no longer needs the OpenTelemetry SDK. See
+  `decisions/2026-11-17_live_start_skips_quiet_default_telemetry_events_the_node_lacks.md`.
+
+- An amendment whose components leave `telemetry` out no longer fails on
+  the session's kept `telemetry_events` or `telemetry_measurements`. They
+  return to their defaults, as kept Poller and call-trace options already
+  did. Given in the same amendment, they are still `invalid_options`.
+
+- The Sentinel sandbox executor no longer refuses a valid provider or body
+  allowlist with `invalid_sandbox_providers` when a module's first load is
+  slow, as it can be on a busy node in interactive mode. The modules now
+  load before the 500 ms identity deadline starts, so the deadline bounds
+  only their identity callbacks.
+
 ### Changed
+
+- The Lab README, the landing page of the Lab's hexdocs, is now a short
+  page: what the Lab is, the Hex install, a five-command quick start,
+  running from a checkout, and links to the reference on
+  insider.hexdocs.pm. The details it alone held moved into `docs/`: the Lab
+  Mix tasks' stdout and stderr and the escript's schedulers
+  (`docs/lab-cli.md`), the Lab's authority boundary
+  (`docs/architecture.md`), and where the oracle runner's bootstrap lives
+  (`docs/lab-candidates-and-oracles.md`).
 
 - The release workflow (`release.yml`) publishes when a push to `main`
   changes the version in both `mix.exs` files, not on a pushed tag. It

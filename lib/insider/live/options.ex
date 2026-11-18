@@ -113,6 +113,7 @@ defmodule Insider.Live.Options do
           max_events: pos_integer(),
           retain_traces: non_neg_integer(),
           telemetry_events: [[String.t()]],
+          telemetry_skipped_defaults: [[String.t()]],
           telemetry_measurements: [String.t()],
           telemetry_policy: TelemetryPolicy.t() | nil,
           filters: Filters.parsed(),
@@ -238,7 +239,11 @@ defmodule Insider.Live.Options do
             "telemetry_events" => %{
               "type" => "list of segment lists",
               "default" => "quiet_defaults",
-              "required_without_quiet_events" => true,
+              "skipped_defaults" =>
+                "a default whose application or atoms this node lacks is skipped, and the start result lists it " <>
+                  "under telemetry_skipped_defaults (reason not_on_target); when none is left the session runs " <>
+                  "without the telemetry component and the result carries telemetry_hint, and telemetry alone " <>
+                  "is refused; a name given here must already be an atom",
               "requires_component" => "telemetry",
               "max" => @max_telemetry_events,
               "segments_max" => @max_event_segments,
@@ -432,7 +437,8 @@ defmodule Insider.Live.Options do
           "default" => "the session's current values",
           "note" =>
             "every start option; each one given replaces the session's value (a list replaces the whole list), null returns it to its default, " <>
-              "and the rest keep theirs, except that the poller options return to their defaults when the components leave the poller out"
+              "and the rest keep theirs, except that the poller options return to their defaults when the components leave the poller out, " <>
+              "and telemetry_events and telemetry_measurements when they leave telemetry out"
         }
       },
       "trace" =>
@@ -813,8 +819,10 @@ defmodule Insider.Live.Options do
          {:ok, lease_ms} <- bounded_integer(options, "lease_ms", @lease_ms),
          {:ok, max_events} <- bounded_integer(options, "max_events", @max_events),
          {:ok, retain_traces} <- bounded_integer(options, "retain_traces", @retain_traces),
-         {:ok, events} <- telemetry_events(options, components),
+         {:ok, events, skipped_defaults} <- telemetry_events(options, components),
          {:ok, measurements} <- telemetry_measurements(options, components),
+         {:ok, components, measurements} <-
+           without_idle_telemetry(components, measurements, events, skipped_defaults),
          {:ok, policy} <- telemetry_policy(events, measurements),
          atoms = Enum.map(components, &Map.fetch!(@components, &1)),
          :ok <- available(atoms),
@@ -831,6 +839,7 @@ defmodule Insider.Live.Options do
          max_events: max_events,
          retain_traces: retain_traces,
          telemetry_events: Enum.map(events, &elem(&1, 0)),
+         telemetry_skipped_defaults: skipped_defaults,
          telemetry_measurements: Enum.map(measurements, &elem(&1, 1)),
          telemetry_policy: policy,
          filters: filters,
@@ -1300,27 +1309,53 @@ defmodule Insider.Live.Options do
   end
 
   # Without `"telemetry_events"`, the telemetry component records the quiet
-  # default events (`Insider.Live.Filters.default_telemetry_events/0`).
+  # default events this node has (`Insider.Live.Filters.telemetry_defaults/0`)
+  # and reports the rest as skipped. Explicit names are never skipped: each
+  # must already be an atom.
   defp telemetry_events(options, components) do
     events = Map.get(options, "telemetry_events")
 
     cond do
       "telemetry" not in components and is_nil(events) ->
-        {:ok, []}
+        {:ok, [], []}
 
       "telemetry" not in components ->
         invalid("telemetry_events")
 
-      is_nil(events) and Filters.default_telemetry_events() != [] ->
-        map_all(Filters.default_telemetry_events(), &telemetry_event/1)
+      is_nil(events) ->
+        {recorded, skipped} = Filters.telemetry_defaults()
+        with {:ok, mapped} <- map_all(recorded, &telemetry_event/1), do: {:ok, mapped, skipped}
 
       events != [] and Value.bounded_list?(events, @max_telemetry_events) ->
-        map_all(events, &telemetry_event/1)
+        with {:ok, mapped} <- map_all(events, &telemetry_event/1), do: {:ok, mapped, []}
 
       true ->
         invalid("telemetry_events")
     end
   end
+
+  # A telemetry component the defaults left without an event would record
+  # nothing, and the Telemetry collector needs at least one event, so the
+  # session runs without it and the start result says why
+  # (`telemetry_hint`). Alone, it leaves nothing to record: refused, with
+  # the same hint.
+  defp without_idle_telemetry(components, _measurements, [], [_ | _] = skipped) do
+    case List.delete(components, "telemetry") do
+      [] ->
+        {:error,
+         Error.new("invalid_options", %{
+           "field" => "telemetry_events",
+           "telemetry_skipped_defaults" => Filters.skipped_defaults(skipped),
+           "hint" => Filters.no_defaults_hint()
+         })}
+
+      components ->
+        {:ok, components, []}
+    end
+  end
+
+  defp without_idle_telemetry(components, measurements, _events, _skipped),
+    do: {:ok, components, measurements}
 
   defp telemetry_event(segments) when is_list(segments) and segments != [] do
     if Value.bounded_list?(segments, @max_event_segments) and Enum.all?(segments, &segment?/1) do

@@ -600,6 +600,29 @@ defmodule Insider.Sentinel.SandboxTest do
     assert_receive {:invalid_registry_result, {:error, :invalid_sandbox_providers}}, 5000
   end
 
+  # A module's first load can outlast the 500 ms identity budget when the code
+  # server is busy. The provider here is built at test time and never loaded,
+  # and its on_load hook holds the load until the test releases it.
+  @tag :tmp_dir
+  test "provider allowlist startup loads a cold module before the identity deadline", %{
+    tmp_dir: tmp_dir
+  } do
+    provider = cold_provider!(tmp_dir)
+    caller = self()
+
+    spawn(fn ->
+      Process.flag(:trap_exit, true)
+      send(caller, {:cold_registry_result, Registry.start_link(providers: [provider])})
+    end)
+
+    assert_receive {:cold_provider_loading, loader}, 5_000
+
+    refute_receive {:cold_registry_result, _result}, 600
+    send(loader, :finish_loading)
+
+    assert_receive {:cold_registry_result, {:ok, _registry}}, 5_000
+  end
+
   test "lease registry rejects unowned cleanup and non-allowlisted providers", %{
     executor: executor
   } do
@@ -1891,6 +1914,39 @@ defmodule Insider.Sentinel.SandboxTest do
       )
 
     Provenance.to_wire_map(provenance)
+  end
+
+  # Compiles a provider into a directory on the code path without loading it,
+  # so its first use is a real cold load. The on_load hook reports to this
+  # test process and holds the load until it receives :finish_loading or the
+  # test process exits.
+  defp cold_provider!(directory) do
+    module = :"Elixir.Insider.TestSupport.ColdProvider#{System.unique_integer([:positive])}"
+    source = Path.join(directory, "#{module}.erl")
+
+    File.write!(source, """
+    -module('#{module}').
+    -export([identity/0]).
+    -on_load(hold/0).
+
+    identity() -> \#{<<"id">> => <<"test.cold-provider">>, <<"version">> => 1}.
+
+    hold() ->
+        Test = list_to_pid("#{:erlang.pid_to_list(self())}"),
+        Monitor = erlang:monitor(process, Test),
+        Test ! {cold_provider_loading, self()},
+        receive
+            finish_loading -> ok;
+            {'DOWN', Monitor, process, Test, _Reason} -> ok
+        end.
+    """)
+
+    {:ok, ^module, _warnings} =
+      :compile.file(String.to_charlist(source), [:return, outdir: String.to_charlist(directory)])
+
+    true = Code.append_path(directory)
+    on_exit(fn -> Code.delete_path(directory) end)
+    module
   end
 
   defp authority!(target, request_id \\ "sandbox-request", duration \\ 2_000) do

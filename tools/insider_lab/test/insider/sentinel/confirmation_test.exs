@@ -45,6 +45,15 @@ defmodule Insider.Sentinel.ConfirmationTest do
   @external_client_wait_ms @external_body_stop_timeout_ms + @external_cleanup_timeout_ms +
                              @external_client_slack_ms
 
+  # Confirmation forwards the scenario cleanup budget as both the body stop
+  # budget and the provider cleanup budget, and the registry keeps 50 ms of
+  # the cleanup budget for the inventory. A busy CI node can stall the
+  # provider release for longer than the rest of a small budget, so the
+  # fixture runs get generous budgets. A passing run never waits them out.
+  @cleanup_timeout_ms 1_000
+  @scenario_duration_ms 2_000
+  @request_timeout_ms 2 * @cleanup_timeout_ms + @scenario_duration_ms + 1_000
+
   setup do
     executor =
       start_supervised!(
@@ -283,16 +292,22 @@ defmodule Insider.Sentinel.ConfirmationTest do
     executor: executor
   } do
     {manifest, capsule, scenario, target} = inputs!()
-    {request, context} = authority!(target, "confirmation-cleanup-budget", 590)
+
+    # Admission needs more than the body stop budget plus the cleanup budget
+    # left before the deadline. With the scenario budget forwarded to both, a
+    # request of exactly twice that budget never has enough left. The 500 ms
+    # executor cleanup default or the 50 ms body stop default in place of
+    # either one would fit in it.
+    {request, context} =
+      authority!(target, "confirmation-cleanup-budget-short", 2 * @cleanup_timeout_ms)
+
+    assert {:error, %Error{code: :policy_denied}} =
+             run(executor, manifest, capsule, scenario, target, request, context)
+
+    {request, context} = authority!(target, "confirmation-cleanup-budget")
 
     assert {:ok, %Record{confirmed: true, cleanup: %{"status" => "complete"}}} =
-             Confirmation.run(executor, manifest, capsule, scenario, target,
-               request: request,
-               context: context,
-               body: ConfirmationBodyMatching,
-               observer: @observer,
-               repair_oracle: nil
-             )
+             run(executor, manifest, capsule, scenario, target, request, context)
   end
 
   test "classifies repaired, unrelated, and nonreproduced without confirming", %{
@@ -685,9 +700,7 @@ defmodule Insider.Sentinel.ConfirmationTest do
     )
   end
 
-  defp inputs!(mode \\ "success", unique \\ 1) do
-    inputs!(mode, unique, %{"cleanup_timeout_ms" => 100, "max_duration_ms" => 400})
-  end
+  defp inputs!(mode \\ "success", unique \\ 1), do: inputs!(mode, unique, limits())
 
   defp external_inputs!(mode \\ "success") do
     inputs!(mode, 1, %{
@@ -709,9 +722,7 @@ defmodule Insider.Sentinel.ConfirmationTest do
     {manifest, capsule, scenario, target}
   end
 
-  defp scenario!(expected, status) do
-    scenario!(expected, status, %{"cleanup_timeout_ms" => 100, "max_duration_ms" => 400})
-  end
+  defp scenario!(expected, status), do: scenario!(expected, status, limits())
 
   defp scenario!(expected, status, limits) do
     {:ok, contract} = Contract.describe(ConfirmationContract)
@@ -734,6 +745,12 @@ defmodule Insider.Sentinel.ConfirmationTest do
 
     scenario
   end
+
+  defp limits,
+    do: %{
+      "cleanup_timeout_ms" => @cleanup_timeout_ms,
+      "max_duration_ms" => @scenario_duration_ms
+    }
 
   defp capsule!(mode, unique) do
     bytes =
@@ -769,7 +786,7 @@ defmodule Insider.Sentinel.ConfirmationTest do
     target
   end
 
-  defp authority!(target, request_id, timeout_ms \\ 1_500) do
+  defp authority!(target, request_id, timeout_ms \\ @request_timeout_ms) do
     now = System.monotonic_time(:millisecond)
     runtime_target = %{node: Atom.to_string(node())}
 

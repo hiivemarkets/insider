@@ -684,11 +684,9 @@ defmodule Insider.Sentinel.Sandbox.Registry do
   end
 
   defp provider_map(providers) do
-    deadline = System.monotonic_time(:millisecond) + @identity_timeout_ms
-
     with true <- Insider.Protocol.Value.bounded_list?(providers, 16),
          true <- Enum.all?(providers, &is_atom/1),
-         identities <- Enum.map(providers, &{provider_identity(&1, deadline), &1}),
+         {:ok, identities} <- identities(providers),
          true <- Enum.all?(identities, fn {identity, _provider} -> valid_identity?(identity) end),
          keys <- Enum.map(identities, fn {identity, _provider} -> provider_key(identity) end),
          true <- Enum.uniq(keys) == keys do
@@ -700,17 +698,28 @@ defmodule Insider.Sentinel.Sandbox.Registry do
   end
 
   defp body_map(bodies) do
-    deadline = System.monotonic_time(:millisecond) + @identity_timeout_ms
-
     with true <- Insider.Protocol.Value.bounded_list?(bodies, 16),
          true <- Enum.all?(bodies, &is_atom/1),
-         identities <- Enum.map(bodies, &{provider_identity(&1, deadline), &1}),
+         {:ok, identities} <- identities(bodies),
          true <- Enum.all?(identities, fn {identity, _body} -> valid_identity?(identity) end),
          keys <- Enum.map(identities, fn {identity, _body} -> provider_key(identity) end),
          true <- Enum.uniq(keys) == keys do
       {:ok, Map.new(identities, fn {identity, body} -> {body, identity} end)}
     else
       _other -> :error
+    end
+  end
+
+  # In interactive mode a module's first use loads it through the code
+  # server, where it can wait behind every other load and purge in the node.
+  # That wait is not the callback's, so the modules load before the identity
+  # deadline starts and the deadline bounds only the identity callbacks.
+  defp identities(modules) do
+    if Enum.all?(modules, &Code.ensure_loaded?/1) do
+      deadline = System.monotonic_time(:millisecond) + @identity_timeout_ms
+      {:ok, Enum.map(modules, &{provider_identity(&1, deadline), &1})}
+    else
+      :error
     end
   end
 

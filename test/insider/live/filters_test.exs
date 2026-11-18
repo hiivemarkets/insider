@@ -21,6 +21,16 @@ defmodule Insider.Live.FiltersTest do
   @tick_kind "insider_live_filters.tick"
   @query_kind "insider_quiet.repo.query"
   @all %{"limit" => 500, "max_bytes" => 1_048_576}
+  # The quiet defaults other than repository query events, in their order.
+  @known_defaults [
+    "phoenix.endpoint.stop",
+    "phoenix.router_dispatch.exception",
+    "oban.job.exception",
+    "absinthe.execute.operation.stop",
+    "bandit.request.stop",
+    "cowboy.request.stop"
+  ]
+  @no_defaults_hint "no default Telemetry events exist on this node; pass --telemetry-event or use discover"
 
   defmodule Noisy do
     # A process whose initial call is this module, for origin rules.
@@ -123,16 +133,124 @@ defmodule Insider.Live.FiltersTest do
       assert {:ok, %{"components" => ["logger"], "telemetry_events" => []}} = Live.start(%{})
     end
 
-    test "explicit telemetry without events uses the defaults, or is refused without any" do
-      assert {:error, %{"code" => "invalid_options", "field" => "telemetry_events"}} =
-               Live.start(%{"components" => ["telemetry"]})
+    test "explicit telemetry without events records the defaults that exist and reports the rest" do
+      # This test node runs none of the applications behind the known
+      # defaults (Phoenix, Oban, Absinthe, Bandit, Cowboy), and has no
+      # repository: the telemetry component has nothing to record, so the
+      # session runs Logger alone and says why.
+      assert {:ok, %{"session_id" => id} = started} =
+               Live.start(%{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_measurements" => ["duration"]
+               })
+
+      assert started["components"] == ["logger"]
+      assert started["telemetry_events"] == []
+      assert started["telemetry_measurements"] == []
+      assert Enum.map(started["telemetry_skipped_defaults"], & &1["event"]) == @known_defaults
+      assert Enum.all?(started["telemetry_skipped_defaults"], &(&1["reason"] == "not_on_target"))
+      assert started["telemetry_hint"] == @no_defaults_hint
+
+      assert {:ok, _stopped} = Live.stop(id)
+      await_slot_free()
+
+      # Telemetry alone would record nothing at all.
+      assert {:error,
+              %{
+                "code" => "invalid_options",
+                "field" => "telemetry_events",
+                "telemetry_skipped_defaults" => [_ | _],
+                "hint" => @no_defaults_hint
+              }} = Live.start(%{"components" => ["telemetry"]})
 
       configure_repos()
 
-      assert {:ok, %{"telemetry_events" => events}} =
+      assert {:ok, %{"telemetry_events" => events} = started} =
                Live.start(%{"components" => ["telemetry"]})
 
+      assert started["components"] == ["telemetry"]
       assert ["insider_quiet", "repo", "query"] in events
+      assert Enum.map(started["telemetry_skipped_defaults"], & &1["event"]) == @known_defaults
+      refute Map.has_key?(started, "telemetry_hint")
+    end
+
+    test "explicit event names skip nothing and an unknown one is still refused" do
+      assert {:error, %{"code" => "unknown_telemetry_event", "event" => event}} =
+               Live.start(%{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_events" => [["insider_live_never_an_atom_q9z", "stop"]]
+               })
+
+      assert event == ["insider_live_never_an_atom_q9z", "stop"]
+
+      assert {:ok, started} =
+               Live.start(%{
+                 "components" => ["telemetry"],
+                 "telemetry_events" => [segments(@tick)]
+               })
+
+      assert started["telemetry_skipped_defaults"] == []
+      refute Map.has_key?(started, "telemetry_hint")
+    end
+
+    test "an amendment back to the defaults reports the skipped ones too" do
+      assert {:ok, %{"session_id" => id}} =
+               Live.start(%{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_events" => [segments(@tick)]
+               })
+
+      assert {:ok, amended} = Live.amend(id, %{"telemetry_events" => nil})
+      assert amended["components"] == ["logger"]
+      assert amended["telemetry_events"] == []
+      assert Enum.map(amended["telemetry_skipped_defaults"], & &1["event"]) == @known_defaults
+      assert amended["telemetry_hint"] == @no_defaults_hint
+      assert "components" in amended["amendment"]["changed"]
+
+      # Naming an event again brings the telemetry component back.
+      assert {:ok, again} = Live.amend(id, %{"telemetry_events" => [segments(@tick)]})
+      assert again["components"] == ["logger", "telemetry"]
+      assert again["telemetry_skipped_defaults"] == []
+      refute Map.has_key?(again, "telemetry_hint")
+    end
+
+    test "an amendment that leaves telemetry out drops its kept events and measurements" do
+      # Telemetry was left out at start for want of defaults, with its
+      # measurement: Logger alone stays a valid amendment.
+      assert {:ok, %{"session_id" => id, "components" => ["logger"]}} =
+               Live.start(%{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_measurements" => ["duration"]
+               })
+
+      assert {:ok, %{"components" => ["logger"], "telemetry_skipped_defaults" => []} = amended} =
+               Live.amend(id, %{"components" => ["logger"]})
+
+      refute Map.has_key?(amended, "telemetry_hint")
+
+      # Named events and measurements are dropped the same way, as kept
+      # Poller and call-trace options are.
+      assert {:ok, %{"components" => ["logger", "telemetry"]}} =
+               Live.amend(id, %{
+                 "components" => ["logger", "telemetry"],
+                 "telemetry_events" => [segments(@tick)],
+                 "telemetry_measurements" => ["duration"]
+               })
+
+      assert {:ok,
+              %{
+                "components" => ["logger"],
+                "telemetry_events" => [],
+                "telemetry_measurements" => []
+              }} =
+               Live.amend(id, %{"components" => ["logger"]})
+
+      # Given with telemetry left out, they are still refused.
+      assert {:error, %{"code" => "invalid_options", "field" => "telemetry_measurements"}} =
+               Live.amend(id, %{
+                 "components" => ["logger"],
+                 "telemetry_measurements" => ["duration"]
+               })
     end
   end
 
@@ -922,6 +1040,56 @@ defmodule Insider.Live.FiltersTest do
              ] == 0
 
       assert {:ok, _stopped} = Live.stop(id)
+    end
+
+    test "with Phoenix loaded, its events are recorded and only the others are skipped",
+         %{baseline: baseline} do
+      refute ["phoenix", "endpoint", "stop"] in baseline
+      # A Phoenix node has these atoms: its modules name them.
+      _atoms = [:phoenix, :endpoint, :router_dispatch, :exception]
+
+      spec = [description: ~c"stand-in", vsn: ~c"1.8.0", modules: [], applications: []]
+      :ok = :application.load({:application, :phoenix, spec})
+      on_exit(fn -> Application.unload(:phoenix) end)
+
+      assert {:ok, %{"session_id" => id} = started} =
+               Live.start(%{"components" => ["logger", "telemetry"]})
+
+      assert started["telemetry_events"] == [
+               ["phoenix", "endpoint", "stop"],
+               ["phoenix", "router_dispatch", "exception"]
+             ]
+
+      assert Enum.map(started["telemetry_skipped_defaults"], & &1["event"]) ==
+               @known_defaults -- ["phoenix.endpoint.stop", "phoenix.router_dispatch.exception"]
+
+      refute Map.has_key?(started, "telemetry_hint")
+      assert started["filters"]["telemetry_event_min_duration_ms"]["phoenix.endpoint.stop"] == 0
+      assert {:ok, _stopped} = Live.stop(id)
+    end
+
+    test "at most eight repository query events count, and a repository whose atoms are missing is skipped",
+         %{baseline: baseline} do
+      repos = for n <- 1..9, do: Module.concat(__MODULE__, "BoundRepo#{n}")
+      on_exit(fn -> for repo <- repos, do: Application.delete_env(:insider, repo) end)
+
+      # The first two share a prefix: the bound counts entries, as in 0.1.0.
+      for {repo, n} <- Enum.with_index(repos, 1) do
+        Application.put_env(:insider, repo,
+          telemetry_prefix: [:insider_bound, String.to_atom("r#{max(n, 2) - 1}")]
+        )
+      end
+
+      # Its default prefix ends in a segment that is no atom on this node.
+      missing = __MODULE__.NeverAnAtomQ9zRepo
+      Application.put_env(:insider, :ecto_repos, [missing | repos])
+
+      {recorded, skipped} = Filters.telemetry_defaults()
+
+      assert recorded -- baseline == for(n <- 1..7, do: ["insider_bound", "r#{n}", "query"])
+
+      assert ["insider", "live", "filters_test", "never_an_atom_q9z_repo", "query"] in skipped
+      refute Enum.any?(skipped, &match?(["insider_bound" | _], &1))
     end
 
     test "a misconfigured repository adds no query event and never raises", %{baseline: baseline} do
