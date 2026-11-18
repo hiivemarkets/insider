@@ -1,6 +1,6 @@
 # Insider Lab
 
-Insider Lab is the development tooling of
+Insider Lab is the command-line observer for
 [Insider](https://insider.hexdocs.pm/readme.html), published to Hex as
 `insider_lab`. It holds the `insider-lab` escript and the Mix tasks that
 observe a running BEAM node from outside, and the ExUnit candidates and
@@ -8,6 +8,15 @@ oracles that help an agent prove a bug with a test. Its API reference is on
 [insider-lab.hexdocs.pm](https://insider-lab.hexdocs.pm/readme.html). The
 guides and the full reference live with the core, on
 [insider.hexdocs.pm](https://insider.hexdocs.pm/docs-index.html).
+
+**Two packages, one version.** Install this one, `insider_lab`, to observe
+a node: `mix escript.install hex insider_lab`. Your app needs no
+dependency. The core, `insider`, is the library the escript loads into the
+node. It has no Mix tasks, so an app that depends only on `insider` has no
+`mix insider.live`. Add `{:insider, "~> 0.1", only: :dev}` to an app only
+for its agents (the usage rules and guides in `deps/insider/`) or for
+Tidewave `project_eval`. The two packages always release at the same
+version.
 
 The Lab is for development and disposable environments. Its code is absent
 from a production build, and it grants no provider, credential, repository,

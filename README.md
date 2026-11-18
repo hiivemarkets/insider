@@ -52,10 +52,19 @@ insider-lab live stop "${N[@]}" --session ID    # read the cleanup receipt
 
 Then point your agent at the welcome document and let it drive. Found
 something wrong? `insider-lab live report --category bug --message '…'`
-files it locally. In an Insider checkout, `mix insider.live` in
-`tools/insider_lab` does the same. [Getting started](docs/getting-started.md)
-has the boot command, the Tidewave variant and when to add Insider to your
-app. The [cheat sheet](docs/cheat-sheet.md) has the commands you use most.
+files it locally. [Getting started](docs/getting-started.md) has the boot
+command and the Tidewave variant. The [cheat sheet](docs/cheat-sheet.md)
+has the commands you use most.
+
+**Two packages, one version.** `insider_lab` is the CLI: the `insider-lab`
+escript and the Mix tasks such as `mix insider.live`. Install it as above
+to observe a node. Most people need only this, and the app needs no
+dependency. `insider` is the core library that the CLI loads into the
+node. Add `{:insider, "~> 0.1", only: :dev}` to your app only for its
+agents (the usage rules and guides in `deps/insider/`) or for Tidewave
+`project_eval`. The core has no Mix tasks, so `mix insider.live` in your
+app reports that the task could not be found: run `insider-lab live`
+instead. The two packages always release at the same version.
 
 ## When to reach for it
 
@@ -92,7 +101,7 @@ path.
 
 ## Status and safety
 
-- **Early.** Version `0.1.1`. The protocol, APIs and package layout will
+- **Early.** Version `0.1.2`. The protocol, APIs and package layout will
   change.
 - **Dev, test and ci only.** The node's own environment decides, never the
   caller. Live observation is denied in staging and production until separate

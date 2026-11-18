@@ -2094,6 +2094,12 @@ defmodule Insider.Lab.LiveObserverTest do
 
         assert text =~ "Usage:"
         assert text =~ "mix insider.live capabilities \"${N[@]}\" --load"
+
+        # Followed in order, the first core command loads Insider into a
+        # node without it.
+        assert [_before, core] = String.split(text, "Core commands:\n", parts: 2)
+        assert [first_core | _rest] = String.split(core, "\n")
+        assert first_core =~ "mix insider.live capabilities \"${N[@]}\" --load"
         assert text =~ "Measurements are opt-in"
         assert text =~ "--telemetry-measurement duration"
         assert text =~ "mix insider.live stop \"${N[@]}\" --session SESSION_ID"
@@ -2102,9 +2108,13 @@ defmodule Insider.Lab.LiveObserverTest do
       end
     end
 
-    test "--help names the Hex install of the escript and the checkout route", _context do
+    test "--help names both packages, the Hex install of the escript and the checkout route",
+         _context do
       {0, text} = help(["--help"])
       flat = String.replace(text, ~r/\s+/, " ")
+
+      assert flat =~ "This observer is the insider_lab package."
+      assert flat =~ "The insider package, the library it loads into the node, has no Mix tasks."
 
       assert flat =~
                "Install from Hex: mix escript.install hex insider_lab, then run insider-lab live OPERATION"

@@ -37,8 +37,8 @@ defmodule Insider.Lab.Live.Help do
       ] ++
         indent(quick_start["steps"]) ++
         ["", "Core commands:"] ++
+        ["  #{quick_start["load"]}    # first contact: loads Insider into a node without it"] ++
         indent(quick_start["commands"]) ++
-        ["  #{quick_start["load"]}    # first contact with a node without Insider"] ++
         ["", "Operations:"] ++
         Enum.map(commands, &"  #{String.pad_trailing(&1["name"], width)}  #{&1["summary"]}") ++
         ["", "Target flags (\"${N[@]}\"):"] ++
@@ -53,7 +53,8 @@ defmodule Insider.Lab.Live.Help do
           "Output: one JSON document per command on stdout (watch prints NDJSON); Mix's Compiling and " <>
             "\"Waiting for lock\" notices go to stderr, so parse stdout alone. Exit status: " <>
             exit_statuses() <> ".",
-          "Install from Hex: mix escript.install hex insider_lab, then run insider-lab live OPERATION from any directory. " <>
+          "This observer is the insider_lab package. The insider package, the library it loads into the node, has no Mix tasks. " <>
+            "Install from Hex: mix escript.install hex insider_lab, then run insider-lab live OPERATION from any directory. " <>
             "In an Insider checkout: run #{@command} from tools/insider_lab, or build the escript there (mix escript.build) " <>
             "and run ./insider-lab live OPERATION. Every form takes the same flags. Several agents at once, or a tool that " <>
             "merges stderr into stdout: use the escript; it starts no Mix, so it prints no Mix notices and never waits on the build lock."

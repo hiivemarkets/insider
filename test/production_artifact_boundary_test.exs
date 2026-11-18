@@ -6,6 +6,19 @@ defmodule Insider.ProductionArtifactBoundaryTest do
 
   @root Path.expand("..", __DIR__)
   @gate Path.join(@root, "scripts/verify-production-artifact")
+  # The package metadata names the Lab, so hex.pm sends a reader to the CLI:
+  # the description's last sentence and the "CLI (insider_lab)" link. Each
+  # permitted source line must match in full, and no other line may name the
+  # Lab, so a Lab path cannot hide on a permitted line.
+  @description "The BEAM accessory for agents, by agents. A runtime-evidence library that " <>
+                 "attaches to a running development node and gives a coding agent a bounded, " <>
+                 "masked window of what the node did. The command-line observer and its Mix " <>
+                 "tasks ship separately as insider_lab."
+  @lab_metadata_lines [
+    ~s{"as insider_lab.",},
+    ~s{"CLI (insider_lab)" => "https://hex.pm/packages/insider_lab"}
+  ]
+
   @lab_entries [
     {"lib/insider/sentinel/injected.ex", "Elixir.Insider.Sentinel.Injected"},
     {"lib/insider/sentinel/source_ownership.ex", "Elixir.Insider.Sentinel.SourceOwnership"},
@@ -140,11 +153,61 @@ defmodule Insider.ProductionArtifactBoundaryTest do
     project = File.read!(Path.join(@root, "mix.exs"))
 
     refute project =~ "escript:"
-    refute project =~ "insider_lab"
+    refute project =~ "{:insider_lab"
+    refute project =~ "tools/insider_lab"
+    refute Enum.any?(Mix.Project.config()[:deps], &(elem(&1, 0) == :insider_lab))
+    assert lab_mentions_are_metadata_only?(project)
+
+    config = Mix.Project.config()
+    assert config[:description] == @description
+
+    assert Enum.filter(config[:package][:links], fn {_name, url} -> url =~ "insider_lab" end) ==
+             [{"CLI (insider_lab)", "https://hex.pm/packages/insider_lab"}]
 
     for dependency <- ["sentry", "datadog", "req", "finch", "tesla", "hackney"] do
       refute project =~ ~s({:#{dependency},)
     end
+  end
+
+  test "a Lab mention anywhere but the two metadata lines fails the boundary check" do
+    project = File.read!(Path.join(@root, "mix.exs"))
+    [description_line, link_line] = @lab_metadata_lines
+
+    extra_expression_on_description =
+      String.replace(
+        project,
+        description_line,
+        ~s{"as insider_lab." <> Path.join(["tools", "insider_lab", "lib"]),}
+      )
+
+    extra_expression_on_link =
+      String.replace(
+        project,
+        link_line,
+        link_line <> ~s{, "Lab" => Path.join(["tools", "insider_lab", "lib"])}
+      )
+
+    lab_source_path =
+      String.replace(
+        project,
+        "elixirc_paths: elixirc_paths(Mix.env()),",
+        ~s{elixirc_paths: [Path.join(["tools", "insider_lab", "lib"])],}
+      )
+
+    for variant <- [extra_expression_on_description, extra_expression_on_link, lab_source_path] do
+      refute variant == project
+      refute lab_mentions_are_metadata_only?(variant)
+    end
+  end
+
+  defp lab_mentions_are_metadata_only?(project) do
+    mentions =
+      project
+      |> String.split("\n")
+      |> Enum.filter(&(&1 =~ "insider_lab"))
+      |> Enum.map(&String.trim/1)
+
+    mentions == @lab_metadata_lines
   end
 
   test "mock provider mappings expose no delivery implementation or network dependency" do

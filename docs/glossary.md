@@ -8,6 +8,8 @@ meaning and tells them apart.
 
 ## Contents
 
+- [Packages](#packages)
+  - [insider vs insider_lab](#insider-vs-insider_lab)
 - [Live observation](#live-observation)
   - [Session](#session)
   - [Owner](#owner)
@@ -37,6 +39,28 @@ meaning and tells them apart.
   - [Load profile](#load-profile)
   - [Production readiness](#production-readiness)
 
+## Packages
+
+### insider vs insider_lab
+
+Insider ships as two Hex packages, always at the same version:
+
+- **`insider_lab`** is the CLI: the `insider-lab` escript
+  (`mix escript.install hex insider_lab`, then `insider-lab live …`) and
+  the Mix tasks, such as `mix insider.live` and `mix insider.candidates`.
+  Install it to observe a node. The app needs no dependency, because
+  `--load` pushes the CLI's own Insider into the node.
+- **`insider`** is the core library: the collectors, the Recorder and
+  `Insider.Live`. It has no Mix tasks, by design. Add
+  `{:insider, "~> 0.1", only: :dev}` to an app only for its agents (the
+  usage rules and guides in `deps/insider/`) or for Tidewave
+  `project_eval`.
+
+An app that depends only on `insider` reports
+`The task "insider.live" could not be found` for `mix insider.live`. Run
+`insider-lab live` instead. See
+[Install the CLI](getting-started.md#1-install-the-cli).
+
 ## Live observation
 
 ### Session
@@ -59,9 +83,10 @@ Insider starts it only where live observation is allowed. See
 
 ### Observer
 
-The observer is the short-lived, hidden node that `mix insider.live` or
-`./insider-lab live` starts for one command. It calls `Insider.Live` in the
-target over Erlang distribution, prints one JSON document, and stops. See
+The observer is the short-lived, hidden node that the `insider_lab` CLI
+starts for one command: `insider-lab live`, or `mix insider.live` in an
+Insider checkout. It calls `Insider.Live` in the target over Erlang
+distribution, prints one JSON document, and stops. See
 [Observer node (Erlang distribution)](live/live-api-and-transports.md#observer-node-erlang-distribution).
 
 ### Component
@@ -200,10 +225,11 @@ by receipt, so an agent can open it. See
 
 ### Lab
 
-The Lab is `tools/insider_lab`, a separate Mix project, published as `insider_lab`, for
-development and disposable environments. It holds the observer task
-(`mix insider.live`), its escript, the candidate inventory, the oracles, and
-Sentinel. A production release cannot load Lab modules. See
+The Lab is `tools/insider_lab`, a separate Mix project, published as
+`insider_lab`, for development and disposable environments. It holds the
+observer task (`mix insider.live`), its escript, the candidate inventory,
+the oracles, and Sentinel. A production release cannot load Lab modules.
+See [insider vs insider_lab](#insider-vs-insider_lab) and
 [Repository layout](development.md#repository-layout).
 
 ### Sentinel

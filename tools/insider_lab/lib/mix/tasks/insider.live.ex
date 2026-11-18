@@ -1,6 +1,11 @@
 defmodule Mix.Tasks.Insider.Live do
   @shortdoc "Observes a live Insider session in another local BEAM node"
   @moduledoc """
+  The observer, as a Mix task of the `insider_lab` package. The core
+  package, `insider`, has no Mix tasks. Outside an Insider checkout, use the
+  escript instead: `mix escript.install hex insider_lab`, then
+  `insider-lab live`, with the same operations, flags and output.
+
   Attaches to another BEAM node on this machine over Erlang distribution and
   drives its `Insider.Live` session, printing canonical JSON.
   [Observer node](https://github.com/hiivemarkets/insider/blob/main/docs/live/live-api-and-transports.md#observer-node-erlang-distribution)
@@ -8,9 +13,9 @@ defmodule Mix.Tasks.Insider.Live do
 
       mix insider.live --help
       mix insider.live help start
+      mix insider.live capabilities --node my_app@localhost --cookie-file ~/.my_app.cookie --load
       mix insider.live welcome --node my_app@localhost --cookie-file ~/.my_app.cookie
       mix insider.live welcome --node my_app@localhost --cookie-file PATH --full
-      mix insider.live capabilities --node my_app@localhost --cookie-file ~/.my_app.cookie
       mix insider.live start --node my_app@localhost --cookie-file PATH --component logger
       mix insider.live events --node my_app@localhost --cookie-file PATH --session ID --cursor 0
       mix insider.live watch --node my_app@localhost --cookie-file PATH --session ID --from-cursor latest --for 60s

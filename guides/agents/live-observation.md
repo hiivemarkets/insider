@@ -22,10 +22,14 @@ bounds, every error code of the node and the observer, the observer's value
 syntax for every flag (such as `module:NAME`), both transports with example
 invocations, and a longer guide.
 
-- Observer node: `mix insider.live welcome --node NAME@HOST --cookie-file PATH`
-  from `tools/insider_lab` in a checkout, or `insider-lab live welcome …`
-  after `mix escript.install hex insider_lab`; add `--full`
-  for the full reference. The first command run against a target node,
+- Observer node: first contact is
+  `insider-lab live capabilities --node NAME@HOST --cookie-file PATH --load`
+  after `mix escript.install hex insider_lab`, or the same operation with
+  `mix insider.live` from `tools/insider_lab` in a checkout. `--load` loads
+  Insider into a node without it. Until then, `welcome` returns
+  `insider_missing`. Then run `welcome` with the same `--node` and
+  `--cookie-file`, and add `--full` for the full reference. The first
+  command run against a target node,
   whatever it is, also carries the quick start under `"welcome"`; later ones
   carry a pointer. `mix insider.live --help` and `help OPERATION` print the
   flags with their value syntax and examples, without a target.

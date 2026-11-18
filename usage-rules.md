@@ -5,17 +5,35 @@ applications, built for coding agents.
 Short on purpose. Each rule names its guide: `deps/insider/guides/<path>.md`
 in a host app, or `guides/` in an Insider checkout.
 
+## The CLI is the `insider_lab` package
+
+- This package, `insider`, is the core library. It has no Mix tasks, by
+  design. In a host app, `mix insider.live` reports
+  `The task "insider.live" could not be found`. That is expected: do not
+  add a dependency or a Mix task to fix it.
+- The observer CLI is the separate `insider_lab` package, always at the same
+  version. Install it once, outside the app, with
+  `mix escript.install hex insider_lab`, and put the directory Mix prints on
+  `PATH`. Then run `insider-lab live` from any directory. First contact
+  with a node is
+  `insider-lab live capabilities --node NAME@HOST --cookie-file PATH --load`:
+  `--load` pushes Insider into a node that lacks it, so the app needs no
+  change. Then read `insider-lab live welcome` with the same `--node` and
+  `--cookie-file`.
+- Every `mix insider.live …` command in the guides and the reference is the
+  same as `insider-lab live …`. The Mix task exists only in an Insider
+  checkout, under `tools/insider_lab`.
+
 ## Where the docs are
 
 - `deps/insider/guides/agents/*.md` and this file: the guides for exactly the
   Insider the app uses. With a `path:` dependency, read that checkout's
   `guides/` instead.
 - On a running node, the welcome document is the authoritative contract:
-  `Insider.Live.welcome()` / `Insider.Live.JSON.welcome()` (the quick start;
-  `%{"full" => true}` for the full reference), or
-  `mix insider.live welcome --node … --cookie-file …` (`--full`) from the
-  Insider checkout's `tools/insider_lab`, or `insider-lab live welcome …`
-  after `mix escript.install hex insider_lab`.
+  `insider-lab live welcome --node … --cookie-file …` after first contact
+  (`--full` for the full reference), or `Insider.Live.welcome()` /
+  `Insider.Live.JSON.welcome()` through Tidewave (`%{"full" => true}` for
+  the full reference).
 - `deps/insider/docs/README.md` (or `docs/README.md` in a checkout) indexes
   the full reference. Its task table names the one section to read for a
   task, with its size. The guides point into it.
@@ -37,7 +55,7 @@ in a host app, or `guides/` in an Insider checkout.
 - Sharing a node with other agents: pass `--reader NAME` to reads, watches,
   stops and amends; `amend` changes recording options for everyone without
   losing history; never `--force` a stop over a peer's active reads without
-  asking. Concurrent agents use the escript (`./insider-lab live`).
+  asking. Concurrent agents use the escript (`insider-lab live`).
 - Disclosure depends on the node's profile. Check the welcome's
   `effective_disclosure.profile` (also `runtime.disclosure_profile`) before
   you rely on any payload. Development and test default to `rich`: events
@@ -51,21 +69,22 @@ in a host app, or `guides/` in an Insider checkout.
 ## Reporting Insider's own bugs
 
 - You must report Insider bugs and every behaviour that differs from the
-  welcome document: `mix insider.live report --category doc_mismatch
+  welcome document: `insider-lab live report --category doc_mismatch
   --message '…'`, or `Insider.Live.JSON.report(%{"category" => …,
   "message" => …})`. Categories: `bug`, `doc_mismatch`,
   `missing_capability`, `confusing_output`.
 - Say what you expected (cite the welcome field) and what happened. Never put
   payloads, log text, option values, or secrets in a report.
 - Reports stay local. Only the developer sends them upstream, with
-  `mix insider.live reports submit --confirm`. `reports submit --dry-run`
+  `insider-lab live reports submit --confirm`. `reports submit --dry-run`
   only previews, whatever opt-in is set. Cite your session with
   `report --session ID`; `reports` groups the shared queue by node and
   session.
 
 ## Other agent tooling
 
-- ExUnit candidates and oracles: `guides/agents/candidates-cli.md`,
+- ExUnit candidates and oracles, Mix tasks of `insider_lab` that run from
+  an Insider checkout: `guides/agents/candidates-cli.md`,
   `guides/agents/oracles.md`.
 - What Insider refuses to do, and why: `guides/agents/refusals.md`. Stop at a
   refusal; do not look for a weaker path.

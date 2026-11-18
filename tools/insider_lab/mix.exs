@@ -1,7 +1,7 @@
 defmodule InsiderLab.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @source_url "https://github.com/hiivemarkets/insider"
 
   def project do
@@ -12,9 +12,10 @@ defmodule InsiderLab.MixProject do
       version: @version,
       elixir: ">= 1.17.0 and < 2.0.0",
       description:
-        "The Insider observer CLI and Mix tasks: attach to a running development BEAM node, " <>
-          "load Insider into it, and read a bounded, masked window of what it did. " <>
-          "Also the development-only test oracles, candidate inventory and Sentinel.",
+        "The command-line observer for insider: the insider-lab escript and the Mix tasks. " <>
+          "It attaches to a running development BEAM node, loads Insider into it, and reads " <>
+          "a bounded, masked window of what it did. Also the development-only test oracles, " <>
+          "candidate inventory and Sentinel.",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       escript: [
@@ -129,7 +130,8 @@ defmodule InsiderLab.MixProject do
       links: %{
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md",
-        "Docs" => "https://hexdocs.pm/insider_lab"
+        "Docs" => "https://hexdocs.pm/insider_lab",
+        "Core (insider)" => "https://hex.pm/packages/insider"
       }
     ]
   end

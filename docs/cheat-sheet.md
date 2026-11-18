@@ -2,11 +2,13 @@
 
 [Index](README.md) · [Glossary](glossary.md) · [Cheat sheet](cheat-sheet.md)
 
-The most-used observer commands, grouped by task. Run them from
-`tools/insider_lab` in a checkout, or write `insider-lab live` in place of
-`mix insider.live` with the escript from Hex
-(`mix escript.install hex insider_lab`). Replace `SESSION_ID`, `TRACE_ID`,
-and the pid with the values that earlier commands print.
+The most-used observer commands, grouped by task. They run the CLI from the
+`insider_lab` package: install it with `mix escript.install hex insider_lab`
+and run the commands from any directory. Your app needs no dependency, and
+the core package, `insider`, has no Mix tasks. In an Insider checkout, write
+`mix insider.live` in place of `insider-lab live`, from `tools/insider_lab`.
+Replace `SESSION_ID`, `TRACE_ID`, and the pid with the values that earlier
+commands print.
 
 ## Contents
 
@@ -36,11 +38,11 @@ See [Welcome document](live/live-welcome-and-reports.md#welcome-document) and
 
 ```sh
 # Is live observation allowed here? --load installs Insider if it is missing
-mix insider.live capabilities "${N[@]}" --load
+insider-lab live capabilities "${N[@]}" --load
 # The agent quick start
-mix insider.live welcome "${N[@]}"
+insider-lab live welcome "${N[@]}"
 # The whole reference
-mix insider.live welcome "${N[@]}" --full
+insider-lab live welcome "${N[@]}" --full
 ```
 
 ## Start a session
@@ -50,13 +52,13 @@ See [Live observation](live/live-api-and-transports.md#live-observation) and
 
 ```sh
 # Record Logger and Telemetry events (the default events this node has)
-mix insider.live start "${N[@]}" --component logger --component telemetry --logger-level info
+insider-lab live start "${N[@]}" --component logger --component telemetry --logger-level info
 # Add OpenTelemetry spans when the node runs the OpenTelemetry SDK
-mix insider.live start "${N[@]}" --component logger --component otel --component telemetry --logger-level info
+insider-lab live start "${N[@]}" --component logger --component otel --component telemetry --logger-level info
 # State, lease, readers, and recording options
-mix insider.live status "${N[@]}" --session SESSION_ID
+insider-lab live status "${N[@]}" --session SESSION_ID
 # Change a recording option of the running session
-mix insider.live amend "${N[@]}" --session SESSION_ID --telemetry-measurement duration --reader agent-a
+insider-lab live amend "${N[@]}" --session SESSION_ID --telemetry-measurement duration --reader agent-a
 ```
 
 ## Mark, act, and read
@@ -69,19 +71,19 @@ See [Pairing marks](live/live-sessions-and-readers.md#pairing-marks),
 
 ```sh
 # Serve a live chart for the programmer; give them the URL it prints
-mix insider.live chart "${N[@]}" --session SESSION_ID --serve
+insider-lab live chart "${N[@]}" --session SESSION_ID --serve
 # Mark the moment before you act
-mix insider.live mark "${N[@]}" --session SESSION_ID --label 'about to click Confirm' --reader agent-a
+insider-lab live mark "${N[@]}" --session SESSION_ID --label 'about to click Confirm' --reader agent-a
 # What happened since the mark, as plain text
-mix insider.live digest "${N[@]}" --session SESSION_ID --since-mark 'about to click Confirm' --human
+insider-lab live digest "${N[@]}" --session SESSION_ID --since-mark 'about to click Confirm' --human
 # The events since the newest mark, one line each
-mix insider.live events "${N[@]}" --session SESSION_ID --since-mark --format compact
+insider-lab live events "${N[@]}" --session SESSION_ID --since-mark --format compact
 # The events from the start. Continue from the next_cursor it prints
-mix insider.live events "${N[@]}" --session SESSION_ID --cursor 0 --limit 100
+insider-lab live events "${N[@]}" --session SESSION_ID --cursor 0 --limit 100
 # Mark the anomalies of the last 5 minutes as normal, so digests lead with new ones
-mix insider.live baseline "${N[@]}" --session SESSION_ID --human
+insider-lab live baseline "${N[@]}" --session SESSION_ID --human
 # A chart of what happened since the mark, as one HTML file
-mix insider.live chart "${N[@]}" --session SESSION_ID --since-mark
+insider-lab live chart "${N[@]}" --session SESSION_ID --since-mark
 ```
 
 ## Follow a request or a process
@@ -92,11 +94,11 @@ and [One-shot inspections](live/live-runtime-evidence.md#one-shot-inspections).
 
 ```sh
 # One request as a tree of spans and events
-mix insider.live trace "${N[@]}" --session SESSION_ID --trace-id TRACE_ID --human
+insider-lab live trace "${N[@]}" --session SESSION_ID --trace-id TRACE_ID --human
 # Everything one process did, in time order
-mix insider.live timeline "${N[@]}" --session SESSION_ID --pid '<0.1234.0>' --human
+insider-lab live timeline "${N[@]}" --session SESSION_ID --pid '<0.1234.0>' --human
 # One process now: status, memory, links, stack, and mailbox shapes
-mix insider.live process "${N[@]}" --name MyApp.Worker
+insider-lab live process "${N[@]}" --name MyApp.Worker
 ```
 
 ## Stop and report
@@ -106,16 +108,18 @@ and [Agent reports](live/live-welcome-and-reports.md#agent-reports).
 
 ```sh
 # Stop, then check the cleanup receipt in the result
-mix insider.live stop "${N[@]}" --session SESSION_ID --reader agent-a
+insider-lab live stop "${N[@]}" --session SESSION_ID --reader agent-a
 #=> {…,"result":{"receipt":{"schema":"insider.collector-session-receipt/v1",…},"state":"stopped",…},…}
 # Report a difference between the docs and what you observed
-mix insider.live report --category doc_mismatch --message 'welcome says X; observed Y'
+insider-lab live report --category doc_mismatch --message 'welcome says X; observed Y'
 ```
 
 ## Several agents at once
 
-Each `mix insider.live` command takes Mix's build lock. Build the escript
-once, and concurrent commands no longer wait. See
+The escript starts no Mix, so several agents can run it at once. In a
+checkout, each `mix insider.live` command takes Mix's build lock. Build the
+escript once in `tools/insider_lab`, and concurrent commands no longer
+wait. See
 [Several agents at once: the escript](live/live-api-and-transports.md#several-agents-at-once-the-escript).
 
 ```sh
