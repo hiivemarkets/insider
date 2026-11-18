@@ -14,10 +14,12 @@ in a host app, or `guides/` in an Insider checkout.
 - The observer CLI is the separate `insider_lab` package, always at the same
   version. Install it once, outside the app, with
   `mix escript.install hex insider_lab`, and put the directory Mix prints on
-  `PATH`. Then run
-  `insider-lab live OPERATION --node NAME@HOST --cookie-file PATH` from any
-  directory, starting with `insider-lab live welcome`. The app needs no
-  change: `--load` pushes Insider into the node.
+  `PATH`. Then run `insider-lab live` from any directory. First contact
+  with a node is
+  `insider-lab live capabilities --node NAME@HOST --cookie-file PATH --load`:
+  `--load` pushes Insider into a node that lacks it, so the app needs no
+  change. Then read `insider-lab live welcome` with the same `--node` and
+  `--cookie-file`.
 - Every `mix insider.live …` command in the guides and the reference is the
   same as `insider-lab live …`. The Mix task exists only in an Insider
   checkout, under `tools/insider_lab`.
@@ -28,9 +30,10 @@ in a host app, or `guides/` in an Insider checkout.
   Insider the app uses. With a `path:` dependency, read that checkout's
   `guides/` instead.
 - On a running node, the welcome document is the authoritative contract:
-  `insider-lab live welcome --node … --cookie-file …` (`--full` for the full
-  reference), or `Insider.Live.welcome()` / `Insider.Live.JSON.welcome()`
-  through Tidewave (`%{"full" => true}` for the full reference).
+  `insider-lab live welcome --node … --cookie-file …` after first contact
+  (`--full` for the full reference), or `Insider.Live.welcome()` /
+  `Insider.Live.JSON.welcome()` through Tidewave (`%{"full" => true}` for
+  the full reference).
 - `deps/insider/docs/README.md` (or `docs/README.md` in a checkout) indexes
   the full reference. Its task table names the one section to read for a
   task, with its size. The guides point into it.

@@ -1066,7 +1066,8 @@ defmodule Insider.Live.Welcome do
       "Every form takes the same operations, flags and output. Set N=(--node NAME@HOST --cookie-file PATH) (the cookie file must be mode 0600). " <>
       "Parse stdout alone: it carries only the JSON, and Mix prints its Compiling and \"Waiting for lock on the build directory\" notices on stderr, which a tool that merges the two streams puts in front of the JSON. " <>
       "With several agents, or such a tool, use the escript: it prints no Mix notices and never waits on Mix's build lock.",
-    "2. If a command fails with insider_missing or insider_not_started, repeat it with --load: it pushes the observer's own Insider into a development, test or ci node without Insider, or starts this build where it is loaded. " <>
+    "2. First contact with a node: #{@observer_command} capabilities \"${N[@]}\" --load. --load pushes the observer's own Insider into a development, test or ci node without Insider, or starts this build where it is loaded. " <>
+      "If a later command fails with insider_missing or insider_not_started, repeat it with --load. " <>
       "--load never replaces another Insider: insider_version_mismatch and load_build_differs need --force-load, which ends any session, so save its evidence (events, digest, handoff) first.",
     "3. Check that the welcome's runtime.allowed is true. One session exists per node: if active_session_id is set, join it (events --cursor latest --reader NAME) rather than stopping it.",
     "4. Start one session. Without options it is quiet: Logger warning and above, OTP crash and supervisor reports, and runtime.quiet_default_telemetry_events. " <>

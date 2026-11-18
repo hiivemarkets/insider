@@ -200,12 +200,14 @@ A host application whose agents use Insider Live can add this to its own
 
 This app can be observed while it runs with Insider Live, in development only.
 
-- Before observing, read the welcome quick start and follow it:
+- Install the CLI with `mix escript.install hex insider_lab`. The CLI is the
+  `insider_lab` package. This app has no `mix insider.live` task.
+- First contact loads Insider into the node:
+  `insider-lab live capabilities --node my_app@$(hostname -s) --cookie-file ~/.my_app.cookie --load`
+- Then read the welcome quick start and follow it:
   `insider-lab live welcome --node my_app@$(hostname -s) --cookie-file ~/.my_app.cookie`
   (`--full` for the whole reference, `insider-lab live --help` for the
   flags), or `Insider.Live.JSON.welcome()` through Tidewave `project_eval`.
-  Install the CLI with `mix escript.install hex insider_lab`. The CLI is the
-  `insider_lab` package. This app has no `mix insider.live` task.
 - Loop: start one session, act, then read `events_since` from your cursor.
   Stop the session when you are done.
 - You must report Insider bugs and anything that behaves differently from the

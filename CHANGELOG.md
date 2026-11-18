@@ -36,6 +36,13 @@ two packages does what.
   field, and the observer's `--help` name `insider_lab` as the observer and
   say that the `insider` package has no Mix tasks. The welcome's `hash`
   changes accordingly.
+- Every entry point's first command against a node is now
+  `capabilities … --load`, which loads Insider into a node without it. In
+  0.1.1, `usage-rules.md`, the host `AGENTS.md` snippet in Getting started,
+  the agent guide and the `mix insider.live` moduledoc started with
+  `welcome`, which returns `insider_missing` on such a node.
+  The welcome's second quick-start step now names that command, and the
+  observer's `--help` lists it first among the core commands.
 
 ## [0.1.1] - 2026-11-18
 

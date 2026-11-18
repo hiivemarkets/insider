@@ -2094,6 +2094,12 @@ defmodule Insider.Lab.LiveObserverTest do
 
         assert text =~ "Usage:"
         assert text =~ "mix insider.live capabilities \"${N[@]}\" --load"
+
+        # Followed in order, the first core command loads Insider into a
+        # node without it.
+        assert [_before, core] = String.split(text, "Core commands:\n", parts: 2)
+        assert [first_core | _rest] = String.split(core, "\n")
+        assert first_core =~ "mix insider.live capabilities \"${N[@]}\" --load"
         assert text =~ "Measurements are opt-in"
         assert text =~ "--telemetry-measurement duration"
         assert text =~ "mix insider.live stop \"${N[@]}\" --session SESSION_ID"

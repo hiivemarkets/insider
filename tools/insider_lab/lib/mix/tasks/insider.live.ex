@@ -13,9 +13,9 @@ defmodule Mix.Tasks.Insider.Live do
 
       mix insider.live --help
       mix insider.live help start
+      mix insider.live capabilities --node my_app@localhost --cookie-file ~/.my_app.cookie --load
       mix insider.live welcome --node my_app@localhost --cookie-file ~/.my_app.cookie
       mix insider.live welcome --node my_app@localhost --cookie-file PATH --full
-      mix insider.live capabilities --node my_app@localhost --cookie-file ~/.my_app.cookie
       mix insider.live start --node my_app@localhost --cookie-file PATH --component logger
       mix insider.live events --node my_app@localhost --cookie-file PATH --session ID --cursor 0
       mix insider.live watch --node my_app@localhost --cookie-file PATH --session ID --from-cursor latest --for 60s

@@ -734,6 +734,37 @@ defmodule Insider.Live.WelcomeTest do
       end
     end
 
+    # A host app that does not depend on Insider answers every observer
+    # command with insider_missing until one carries --load. Followed in
+    # order, each entry point's first command against a node must load it.
+    test "the first command against a node in each entry point carries --load" do
+      [_get_observer, first_contact | _rest] = Live.welcome()["quick_start"]["steps"]
+      assert first_contact =~ ~s(capabilities "${N[@]}" --load)
+      assert Live.welcome()["quick_start"]["load"] =~ ~s(capabilities "${N[@]}" --load)
+
+      command = ~r{(?:insider-lab live|mix insider\.live) ([a-z][a-z-]*)([^\n`]*)}
+
+      for path <- [
+            "README.md",
+            "usage-rules.md",
+            "docs/getting-started.md",
+            "docs/cheat-sheet.md",
+            "guides/agents/live-observation.md",
+            "lib/insider.ex",
+            "tools/insider_lab/README.md",
+            "tools/insider_lab/lib/mix/tasks/insider.live.ex"
+          ] do
+        first =
+          Regex.scan(command, File.read!(path))
+          |> Enum.find(fn [_line, _operation, rest] ->
+            rest =~ "--node" or rest =~ ~s("${N[@]}")
+          end)
+
+        assert [line, "capabilities", rest] = first, "#{path}: #{inspect(first)}"
+        assert rest =~ ~r/--load\b/, "#{path}: #{line}"
+      end
+    end
+
     test "the recipes start with a digest and cover latency, log floods, crash loops, 5xx, mailboxes, memory, binary and port leaks, amendments, agents, unknown event names, frontend actions, and failing calls" do
       [first | _rest] = all = Live.welcome()["recipes"]
       recipes = Map.new(all, &{&1["symptom"] |> String.split(":") |> hd(), &1})

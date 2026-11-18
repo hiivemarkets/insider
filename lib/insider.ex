@@ -2,7 +2,8 @@ defmodule Insider do
   @moduledoc """
   Runtime evidence for the BEAM. The CLI that observes a node is the separate
   `insider_lab` package: `mix escript.install hex insider_lab`, then
-  `insider-lab live welcome --node NAME@HOST --cookie-file PATH`.
+  `insider-lab live capabilities --node NAME@HOST --cookie-file PATH --load`
+  for first contact, and `insider-lab live welcome` with the same flags.
 
   This package, `insider`, is the core library: the collectors, the Recorder,
   redaction, and `Insider.Live`, which the CLI calls in the node. It has no

@@ -37,8 +37,8 @@ defmodule Insider.Lab.Live.Help do
       ] ++
         indent(quick_start["steps"]) ++
         ["", "Core commands:"] ++
+        ["  #{quick_start["load"]}    # first contact: loads Insider into a node without it"] ++
         indent(quick_start["commands"]) ++
-        ["  #{quick_start["load"]}    # first contact with a node without Insider"] ++
         ["", "Operations:"] ++
         Enum.map(commands, &"  #{String.pad_trailing(&1["name"], width)}  #{&1["summary"]}") ++
         ["", "Target flags (\"${N[@]}\"):"] ++
