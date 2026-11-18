@@ -1646,14 +1646,17 @@ defmodule Insider.Live.Owner do
   # sweep from the session's first receipt.
   defp put_config(session, parsed) do
     # With the telemetry component, the traces of mutation requests are
-    # kept by default (`Insider.Live.Retention`), as their records are.
+    # kept by default (`Insider.Live.Retention`), as their records are;
+    # with any component that records traced events, failed and slow traces.
     telemetry? = :telemetry in parsed.components
+    notable? = Enum.any?([:logger, :telemetry, :otel], &(&1 in parsed.components))
 
     retention =
       (Map.get(session, :retention) || Retention.new(parsed.retain_traces))
       |> Retention.set_limit(parsed.retain_traces)
       |> Retention.keep_mutations(telemetry?)
-      |> then(&if(parsed.retain_traces > 0 or telemetry?, do: Retention.start(&1, 0), else: &1))
+      |> Retention.keep_notable(notable?)
+      |> then(&if(parsed.retain_traces > 0 or notable?, do: Retention.start(&1, 0), else: &1))
 
     # Every mutation the telemetry component records keeps a compact record.
     mutations =

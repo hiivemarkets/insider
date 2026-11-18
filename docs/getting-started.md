@@ -137,6 +137,12 @@ and
 - Point your agent at the welcome document and let it drive. The welcome is
   generated from the code, so it matches the Insider that is loaded.
 - Use Insider next to Tidewave, not instead of it.
+- The Recorder holds at most 4,096 events (`--max-events`), so busy traffic
+  evicts older ones. Traces that failed, were slow (500 ms or more), or ran
+  a GraphQL mutation are kept by default, so `trace` finds the request you
+  just reproduced. Keep any other trace with `trace --retain`, or the N
+  latest with `start --retain-traces N`. See
+  [Pin a trace](live/live-otel-traces.md#pin-a-trace).
 - Found something wrong? Run
   `insider-lab live report --category bug --message '…'`. Reports stay local
   until you send them.

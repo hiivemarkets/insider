@@ -683,7 +683,8 @@ defmodule Insider.Live.Welcome do
       ],
       "summary" =>
         "Prints one trace: its spans as a tree with the same trace's Logger and Telemetry events in time order. " <>
-          "--retain pins it, so it and its later events survive the Recorder's eviction (or start with --retain-traces N); " <>
+          "A trace that failed, was slow (500 ms or more) or ran a GraphQL mutation survives the Recorder's eviction by default " <>
+          "(its retention says why); --retain pins any other, so it and its later events survive too (or start with --retain-traces N); " <>
           "--values (rich profile) adds its GraphQL response values, narrowed with --values-path. " <>
           "--human prints the span tree as text, each span with its duration and outcome (a GraphQL operation's result kind, " <>
           "error codes and paths, or payload error fields); --collapse sql,auth folds each run of such siblings into one counted line " <>

@@ -175,7 +175,8 @@ The word has three meanings:
 - **Mark window.** Everything after a mark, up to the newest receipt. See
   [Pairing marks](live/live-sessions-and-readers.md#pairing-marks).
 - **Retention window.** The events that the Recorder still holds, plus the
-  traces that a session pins outside the Recorder. See
+  traces that a session keeps outside the Recorder: pinned, or kept by
+  default because they failed, were slow, or ran a mutation. See
   [Pin a trace](live/live-otel-traces.md#pin-a-trace).
 
 ### Baseline

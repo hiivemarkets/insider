@@ -81,6 +81,7 @@ continues in [Live observation status](#live-observation-status) and
 | GraphQL outcome | The outcome on spans and Telemetry events | Core | [GraphQL outcome](live/live-otel-traces.md#graphql-outcome) |
 | Query shapes | A trace groups its repeated query shapes | Core | [Repeated query shapes](live/live-otel-traces.md#repeated-query-shapes) |
 | Request waits | Each request's wait | Core | [Request waits and bursts](live/live-otel-traces.md#request-waits-and-bursts) |
+| Trace retention | Pinned traces, and failed, slow, and mutation traces by default, survive the Recorder's eviction | Core | [Pin a trace](live/live-otel-traces.md#pin-a-trace) |
 | Mutation records | A kept record of each GraphQL mutation | Core | [Kept mutation records](live/live-otel-traces.md#kept-mutation-records) |
 | Value changes | `changes` names the writer of an in-memory value | Core | [Changes of in-memory values](live/live-runtime-evidence.md#changes-of-in-memory-values) |
 

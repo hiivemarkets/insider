@@ -186,7 +186,8 @@ Each operation that this guide does not cover has its own section:
 
 - One request as a span tree: `trace`, in
   [Read one request as a trace](../../docs/live/live-otel-traces.md#read-one-request-as-a-trace).
-  Keep it past eviction with `--retain`, in
+  Failed, slow (500 ms or more) and mutation traces survive eviction by
+  default; keep any other with `--retain`, in
   [Pin a trace](../../docs/live/live-otel-traces.md#pin-a-trace).
 - GraphQL response values: `trace --values`, in
   [Response values](../../docs/live/live-otel-traces.md#response-values).

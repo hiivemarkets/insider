@@ -34,6 +34,49 @@ defmodule Insider.Live.RetentionTest do
     }
   end
 
+  # A failed event of `trace_id`: a Logger error.
+  defp failed(receipt, trace_id) do
+    receipt |> entry(trace_id) |> put_in(["event", "severity"], "error")
+  end
+
+  # An OpenTelemetry span of `trace_id` that took `ms` milliseconds.
+  defp span(receipt, trace_id, ms) do
+    %{
+      "receipt" => receipt,
+      "event" => %{
+        "source" => "otel",
+        "kind" => "otel.span",
+        "severity" => "info",
+        "causality" => %{"trace_id" => trace_id},
+        "attributes" => %{"duration_us" => ms * 1_000}
+      },
+      "redactions" => []
+    }
+  end
+
+  # A Telemetry stop of `trace_id` whose `duration` measurement (native
+  # units, as recorded) is `ms` milliseconds.
+  defp telemetry_stop(receipt, trace_id, ms) do
+    %{
+      "receipt" => receipt,
+      "event" => %{
+        "source" => "telemetry",
+        "kind" => "phoenix.endpoint.stop",
+        "severity" => "info",
+        "causality" => %{"trace_id" => trace_id},
+        "attributes" => %{
+          "measurements" => %{"duration" => System.convert_time_unit(ms, :millisecond, :native)}
+        }
+      },
+      "redactions" => []
+    }
+  end
+
+  defp notable(limit \\ 0),
+    do: limit |> Retention.new() |> Retention.keep_notable(true) |> Retention.start(0)
+
+  defp id(n), do: String.pad_leading(Integer.to_string(n), 32, "0")
+
   defp read(cursor, next, entries, evicted \\ 0),
     do: %{"cursor" => cursor, "next_cursor" => next, "events" => entries, "evicted" => evicted}
 
@@ -286,6 +329,156 @@ defmodule Insider.Live.RetentionTest do
       # silently exact.
       assert %{"lost" => 0} = Retention.info(retention, id.(1))
       assert %{"loss_counters_evicted" => 1} = Retention.describe(retention)
+    end
+  end
+
+  # A failing request's trace came back empty after a minute of normal
+  # traffic evicted it: only mutation traces were kept by default. Failed
+  # and slow traces are kept too, each kind in its own pool.
+  describe "failed and slow traces" do
+    test "a failed trace is kept with the events before its error and every later one" do
+      retention =
+        notable()
+        |> Retention.sweep(read(0, 4, [entry(1, @a), entry(2, @b), entry(3, @a), failed(4, @a)]))
+        |> Retention.sweep(read(4, 6, [entry(5, @a), entry(6, @b)]))
+
+      assert receipts(retention, @a) == [1, 3, 4, 5]
+      assert Retention.entries(retention, @b) == []
+      assert %{"pinned" => "failed", "lost" => 0} = Retention.info(retention, @a)
+
+      assert %{"failed_traces" => 1, "slow_traces" => 0, "keep_failed_and_slow" => true} =
+               Retention.describe(retention)
+
+      critical =
+        Retention.sweep(
+          notable(),
+          read(0, 1, [put_in(entry(1, @c), ["event", "severity"], "critical")])
+        )
+
+      assert %{"pinned" => "failed"} = Retention.info(critical, @c)
+    end
+
+    test "a trace with a span or Telemetry duration at the threshold is kept as slow, a faster one is not" do
+      threshold = Retention.bounds()["slow_trace_ms"]
+      assert threshold == 500
+
+      retention =
+        notable()
+        |> Retention.sweep(
+          read(0, 6, [
+            entry(1, @a),
+            span(2, @a, threshold),
+            entry(3, @b),
+            telemetry_stop(4, @b, threshold + 1),
+            span(5, @c, threshold - 1),
+            telemetry_stop(6, @c, threshold - 1)
+          ])
+        )
+
+      assert receipts(retention, @a) == [1, 2]
+      assert %{"pinned" => "slow"} = Retention.info(retention, @a)
+      assert receipts(retention, @b) == [3, 4]
+      assert %{"pinned" => "slow"} = Retention.info(retention, @b)
+      assert Retention.info(retention, @c) == nil
+      assert %{"slow_traces" => 2} = Retention.describe(retention)
+    end
+
+    test "without keep_notable neither failed nor slow traces are kept" do
+      retention =
+        Retention.new(0)
+        |> Retention.keep_mutations(true)
+        |> Retention.start(0)
+        |> Retention.sweep(read(0, 2, [failed(1, @a), span(2, @b, 1_000)]))
+
+      assert Retention.info(retention, @a) == nil
+      assert Retention.info(retention, @b) == nil
+      refute Retention.describe(retention)["keep_failed_and_slow"]
+
+      assert Retention.active?(notable())
+      off = notable() |> Retention.keep_notable(false)
+      refute Retention.active?(off)
+    end
+
+    test "a burst of failed traces past their pool never lets a mutation trace go" do
+      max = Retention.bounds()["failed_traces_max"]
+      failures = for n <- 1..(max + 4), do: failed(n + 1, id(n))
+
+      retention =
+        Retention.new(0)
+        |> Retention.keep_mutations(true)
+        |> Retention.keep_notable(true)
+        |> Retention.start(0)
+        |> Retention.sweep(read(0, 1, [stop(1, @a)]))
+        |> Retention.sweep(read(1, max + 5, failures))
+
+      assert %{"pinned" => "mutation"} = Retention.info(retention, @a)
+      assert Retention.info(retention, id(1)) == nil
+      assert %{"pinned" => "failed"} = Retention.info(retention, id(max + 4))
+
+      assert %{"failed_traces" => ^max, "mutation_traces" => 1, "evicted_traces" => 4} =
+               Retention.describe(retention)
+    end
+
+    test "a kept trace moves to the stronger reason: slow, then failed, then mutation" do
+      retention =
+        Retention.new(0)
+        |> Retention.keep_mutations(true)
+        |> Retention.keep_notable(true)
+        |> Retention.start(0)
+        |> Retention.sweep(read(0, 1, [span(1, @a, 900)]))
+
+      assert %{"pinned" => "slow"} = Retention.info(retention, @a)
+      retention = Retention.sweep(retention, read(1, 2, [failed(2, @a)]))
+      assert %{"pinned" => "failed"} = Retention.info(retention, @a)
+      retention = Retention.sweep(retention, read(2, 3, [stop(3, @a)]))
+      assert %{"pinned" => "mutation"} = Retention.info(retention, @a)
+      # A weaker reason later never demotes it.
+      retention = Retention.sweep(retention, read(3, 4, [span(4, @a, 900)]))
+      assert %{"pinned" => "mutation", "events" => 4} = Retention.info(retention, @a)
+      assert %{"slow_traces" => 0, "failed_traces" => 0} = Retention.describe(retention)
+    end
+
+    test "an automatic trace that fails stays automatic until the pool lets it go" do
+      retention =
+        notable(1) |> Retention.sweep(read(0, 3, [entry(1, @a), failed(2, @a), entry(3, @b)]))
+
+      assert %{"pinned" => "failed"} = Retention.info(retention, @a)
+      assert %{"pinned" => "auto"} = Retention.info(retention, @b)
+
+      kept =
+        notable(2) |> Retention.sweep(read(0, 3, [entry(1, @a), failed(2, @a), entry(3, @b)]))
+
+      assert %{"pinned" => "auto"} = Retention.info(kept, @a)
+    end
+
+    test "past the byte bound, slow traces go first, then failed, then mutation traces" do
+      big = div(Retention.bounds()["retained_bytes_max"], 3)
+
+      retention =
+        Retention.new(0)
+        |> Retention.keep_mutations(true)
+        |> Retention.keep_notable(true)
+        |> Retention.start(0)
+        |> Retention.sweep(
+          read(0, 6, [
+            entry(1, @a, big),
+            stop(2, @a),
+            entry(3, @b, big),
+            failed(4, @b),
+            entry(5, @c, big),
+            span(6, @c, 900)
+          ])
+        )
+
+      assert Retention.info(retention, @c) == nil
+      assert %{"pinned" => "failed"} = Retention.info(retention, @b)
+      assert %{"pinned" => "mutation"} = Retention.info(retention, @a)
+
+      retention = Retention.sweep(retention, read(6, 8, [entry(7, @c, big), failed(8, @c)]))
+      # The older failed trace goes before the mutation trace.
+      assert Retention.info(retention, @b) == nil
+      assert %{"pinned" => "failed"} = Retention.info(retention, @c)
+      assert %{"pinned" => "mutation"} = Retention.info(retention, @a)
     end
   end
 end

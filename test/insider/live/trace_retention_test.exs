@@ -502,6 +502,188 @@ defmodule Insider.Live.TraceRetentionTest do
     end
   end
 
+  # A failing request's trace came back empty (0 spans, thousands evicted)
+  # after a minute of normal traffic, until --retain-traces was set and the
+  # request run again. Failed and slow traces are kept by default.
+  describe "kept by default" do
+    defp sweep_now do
+      send(Process.whereis(Owner), :push)
+      :sys.get_state(Owner)
+    end
+
+    defp query_stop(ms) do
+      blueprint = %{
+        __struct__: Absinthe.Blueprint,
+        operations: [%{name: "listOrders", type: :query, current: true, selections: []}],
+        fragments: [],
+        result: %{data: %{}}
+      }
+
+      duration = System.convert_time_unit(ms, :millisecond, :native)
+      :telemetry.execute(@stop, %{duration: duration}, %{blueprint: blueprint, options: []})
+    end
+
+    test "a failing request's trace survives eviction and says why it was kept" do
+      id = start()
+
+      in_trace(@trace, ["loading order", "charging card"], fn ->
+        Logger.error("charge failed")
+        Logger.info("rolled back")
+      end)
+
+      sweep_now()
+      flood(id)
+
+      assert {:ok, trace} = Live.trace(id, @trace, %{"human" => true})
+      assert logged(trace) == ["loading order", "charging card", "charge failed", "rolled back"]
+      assert Enum.any?(trace["gaps"], &(&1["reason"] == "evicted" and &1["count"] > 0))
+
+      assert %{"pinned" => "failed", "events" => 4, "restored" => 4, "lost" => 0} =
+               trace["retention"]
+
+      assert trace["text"] =~
+               "\nRetained: kept because it failed; 4 events kept, 4 of them restored"
+
+      refute trace["text"] =~ "Hint:"
+
+      assert {:ok, %{"retention" => %{"failed_traces" => 1, "keep_failed_and_slow" => true}}} =
+               Live.status(id)
+    end
+
+    test "a slow request's trace survives eviction and says why it was kept" do
+      id = start()
+      in_trace(@trace, ["listing orders"], fn -> query_stop(600) end)
+      sweep_now()
+      flood(id)
+
+      assert {:ok, trace} = Live.trace(id, @trace, %{"human" => true})
+      kinds = Enum.map(trace["items"], & &1["event"]["kind"])
+      assert "absinthe.execute.operation.stop" in kinds
+      # The Logger flood evicted the request's Logger line, which retention
+      # restores; the operation stop is within the Telemetry source's share
+      # of the Recorder, so it is still held.
+      assert logged(trace) == ["listing orders"]
+      assert %{"pinned" => "slow", "events" => 2, "restored" => 1} = trace["retention"]
+      assert trace["text"] =~ "\nRetained: kept because it was slow (≥ 500 ms); 2 events kept"
+    end
+
+    test "a fast, successful request's trace is not kept and still says how to pin it" do
+      id = start()
+      in_trace(@trace, ["listing orders"], fn -> query_stop(1) end)
+      sweep_now()
+      flood(id)
+
+      assert {:ok, trace} = Live.trace(id, @trace, %{"human" => true})
+      assert logged(trace) == []
+      assert trace["retention"]["pinned"] == nil
+      assert trace["retention"]["hint"] =~ "trace --trace-id #{@trace} --retain"
+
+      assert {:ok, %{"retention" => %{"traces" => 0, "failed_traces" => 0, "slow_traces" => 0}}} =
+               Live.status(id)
+    end
+
+    test "a burst of failing requests never lets a kept mutation trace go" do
+      id = start()
+
+      blueprint = %{
+        __struct__: Absinthe.Blueprint,
+        operations: [%{name: "placeOrder", type: :mutation, current: true, selections: []}],
+        fragments: [],
+        result: %{data: %{}}
+      }
+
+      in_trace(@trace, ["placing"], fn ->
+        :telemetry.execute(@stop, %{duration: 1_000}, %{blueprint: blueprint, options: []})
+      end)
+
+      max = Insider.Live.Retention.bounds()["failed_traces_max"]
+
+      for n <- 1..(max + 4) do
+        trace_id = n |> Integer.to_string() |> String.pad_leading(32, "f")
+        in_trace(trace_id, [], fn -> Logger.error("background call failed") end)
+      end
+
+      sweep_now()
+      flood(id)
+
+      assert {:ok, trace} = Live.trace(id, @trace)
+      assert logged(trace) == ["placing"]
+      assert %{"pinned" => "mutation"} = trace["retention"]
+
+      assert {:ok, %{"retention" => %{"mutation_traces" => 1, "failed_traces" => ^max}}} =
+               Live.status(id)
+    end
+
+    # A scratch app with only the Logger: its request carries the trace id
+    # in Logger metadata.
+    test "a logger-only session keeps a failed trace" do
+      id = start(%{"components" => ["logger"], "telemetry_events" => nil})
+
+      in_trace(@trace, ["step 1"], fn -> Logger.error("step 2 failed") end)
+      sweep_now()
+      flood(id)
+
+      assert {:ok, trace} = Live.trace(id, @trace, %{"human" => true})
+      assert logged(trace) == ["step 1", "step 2 failed"]
+      assert %{"pinned" => "failed", "restored" => 2} = trace["retention"]
+      assert trace["text"] =~ "\nRetained: kept because it failed"
+
+      assert {:ok, %{"retention" => %{"keep_failed_and_slow" => true, "keep_mutations" => false}}} =
+               Live.status(id)
+    end
+
+    @tag skip: :erlang.system_info(:otp_release) < ~c"28" && "the otel component requires OTP 28"
+    test "an otel-only session keeps a failed span's trace" do
+      assert {:ok, %{"session_id" => id}} =
+               Live.start(%{"components" => ["otel"], "max_events" => 64})
+
+      span = fn trace_id, span_id, parent, status ->
+        %{
+          "trace_id" => trace_id,
+          "span_id" => span_id,
+          "parent_span_id" => parent,
+          "name" => "GET /orders",
+          "span_kind" => "server",
+          "status" => status,
+          "status_message" => nil,
+          "service" => "shop-a",
+          "scope" => "test",
+          "start_time_us" => System.os_time(:microsecond),
+          "duration_us" => 1_000,
+          "attributes" => %{},
+          "pid" => nil
+        }
+      end
+
+      assert {:ok, %{"accepted" => 2}} =
+               Live.ingest_spans(id, [
+                 span.(@trace, "00f067aa0ba902b8", @span, "ok"),
+                 span.(@trace, @span, nil, "error")
+               ])
+
+      sweep_now()
+
+      for chunk <- 1..6 do
+        spans =
+          for n <- 1..50 do
+            trace_id = (chunk * 100 + n) |> Integer.to_string() |> String.pad_leading(32, "e")
+            span.(trace_id, @span, nil, "ok")
+          end
+
+        assert {:ok, %{"accepted" => 50}} = Live.ingest_spans(id, spans)
+        assert {:ok, _caught_up} = Live.events_since(id, "latest")
+      end
+
+      assert {:ok, trace} = Live.trace(id, @trace, %{"human" => true})
+      assert trace["spans"] == 2
+      assert %{"pinned" => "failed", "restored" => 2} = trace["retention"]
+      assert trace["text"] =~ "\nRetained: kept because it failed"
+
+      assert {:ok, %{"retention" => %{"keep_failed_and_slow" => true, "keep_mutations" => false}}} =
+               Live.status(id)
+    end
+  end
+
   defp assert_eventually(predicate, attempts \\ 150)
 
   defp assert_eventually(predicate, attempts) when attempts > 0 do
