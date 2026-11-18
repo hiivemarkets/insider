@@ -29,9 +29,13 @@ invocations, and a longer guide.
   Insider into a node without it. Until then, `welcome` returns
   `insider_missing`. Then run `welcome` with the same `--node` and
   `--cookie-file`, and add `--full` for the full reference. The first
-  command run against a target node,
-  whatever it is, also carries the quick start under `"welcome"`; later ones
-  carry a pointer. `mix insider.live --help` and `help OPERATION` print the
+  command run against a target node also carries the quick start under
+  `"welcome"`, once, unless it is a short receipt (`mark`, `amend`, `stop`,
+  `renew`, `chart`, `reports`): then the next command does. Afterwards only
+  `capabilities` carries a pointer with the delivered hash. Every ok document
+  carries `installation.same_build`, `insider_version` and `insider_commit`;
+  the whole installation report comes with `capabilities`, a load, or
+  another build. `mix insider.live --help` and `help OPERATION` print the
   flags with their value syntax and examples, without a target.
 - Parse stdout alone. It carries only the observer's documents; Mix prints
   its `Compiling` and `Waiting for lock on the build directory` notices

@@ -329,7 +329,7 @@ The observer refuses `--load` and `--force-load` with `load_refused` unless the 
 
 Insider does not support two observers that install into one target at first contact at the same time. It also does not support an Insider start during a first-contact install. The result of such a race is undefined. See `decisions/2026-10-23_observer_load_only_installs_and_only_force_replaces.md`.
 
-The `installation` object in every document (in a `watch`, its `subscribed` line) reports the Insider version and `insider_commit`, the commit this observer's Insider was built from. It reports `observer_build` and `target_build`, the two build identities. `target_build` is `null` for an Insider from before builds were identified. It reports `same_build`, with a `remedy` when it is false. It also reports the action taken (`none`, `started`, or `loaded`) and the pushed applications.
+The `installation` object reports the Insider version and `insider_commit`, the commit this observer's Insider was built from. On `capabilities`, after a load (`--load` or `--force-load` took an action), and whenever the target runs another build, it is the whole report. It then also reports `observer_build` and `target_build`, the two build identities. `target_build` is `null` for an Insider from before builds were identified. It reports `same_build`, with a `remedy` when it is false. It also reports the action taken (`none`, `started`, or `loaded`), the pushed applications, and the environment. Every other document (in a `watch`, its `subscribed` line) carries only `same_build`, `insider_version`, and `insider_commit`. Errors carry no `installation`.
 
 ### Default session
 
@@ -506,7 +506,7 @@ A compact batch also says what its `#` line implies:
 
 `watch` subscribes the observer process. It prints a `subscribed` line, then one `batch` line per pushed batch.
 
-- Only the `subscribed` line carries the document envelope: `schema`, `status`, `operation`, `target`, `installation`, and on a first contact `welcome`. Its `result` is the session's status. Its `subscription` is the target's `insider.live-subscription/v1` reply, whose `cursor` is where the stream starts.
+- Only the `subscribed` line carries the document envelope: `schema`, `status`, `operation`, `target`, `installation` (the summary, unless the whole report applies), and, until the quick start was delivered, `welcome`. Its `result` is the session's status. Its `subscription` is the target's `insider.live-subscription/v1` reply, whose `cursor` is where the stream starts.
 - Every later line carries only `kind` and its own fields. A `batch` line carries its `result`. Each batch's `cursor` is the previous batch's `next_cursor`.
 - The final `stopped` line carries its `reason`, `events` (how many it printed), and `next_cursor`. A later `watch --from-cursor` or `events --cursor` resumes there without a gap.
 

@@ -204,12 +204,17 @@ changes. That includes the host's measurement allowlist and report-submission se
 changes with the node's runtime state or disclosure setting. The quick start carries the same hash.
 `capabilities/0` carries it under `welcome`, so an agent that skipped the document learns of it.
 
-The observer also delivers the quick start without being asked. The first command run against a
-target node (any operation) carries it under a top-level `"welcome"` key inside its one JSON
-document. Later commands carry a pointer to it: `schema`, `delivered`, `hash`, `read_with`, and
-`full_reference`. `schema` is the quick start's schema, which `read_with` returns.
-`full_reference.schema` is the full reference's schema. Printing `welcome`, with or without
-`--full`, counts as delivery.
+The observer also delivers the quick start without being asked, once. The first command run against
+a target node carries it under a top-level `"welcome"` key inside its one JSON document. Short
+receipts never carry it: `mark`, `amend`, `stop`, `renew`, `chart`, `reports`, and
+`reports submit`. When the first command is one of them, the next other command carries the quick
+start. Printing `welcome`, with or without `--full`, counts as delivery.
+
+After delivery, only `capabilities`, the discovery command, carries a pointer to the quick start:
+`schema`, `delivered`, `hash`, `read_with`, and `full_reference`. `schema` is the quick start's
+schema, which `read_with` returns. `full_reference.schema` is the full reference's schema. Every
+other command carries no `"welcome"` key. Compare the pointer's `hash`, the one delivered, with
+`result.welcome.hash`, the node's current one; read `welcome` again when they differ.
 
 The observer records delivery per target node incarnation: its name and its distribution creation.
 The creation changes when the node restarts. The record is in the observer's reports directory,
