@@ -134,14 +134,15 @@ defmodule Insider.Lab.Live.Format do
 
   defp welcome_line(_document), do: []
 
-  # A watch that goes on through its reader's stored view says so once,
-  # before it subscribes, rather than on every pushed batch.
+  # A watch that goes on through its reader's stored view, or that kept or
+  # cleared it, says so once, before it subscribes, rather than on every
+  # pushed batch.
   defp watch_lines(%{"kind" => "subscribed"} = line) do
     subscription = line["subscription"] || %{}
 
     [
       welcome_line(line),
-      note_lines([get_in(subscription, ["stored_view", "note"])]),
+      note_lines([get_in(subscription, ["stored_view", "note"]), subscription["view_note"]]),
       hash_line([
         "subscribed",
         {"session", get_in(line, ["result", "session_id"])},

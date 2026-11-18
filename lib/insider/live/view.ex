@@ -294,18 +294,20 @@ defmodule Insider.Live.View do
 
   @doc """
   Said by a read that kept `spec` (which hid `hidden` events, a count map
-  or a count) or cleared it (`nil`), because the change reaches the
-  reader's later reads, not this one.
+  or a count; `nil` when it counted none, as a subscription has not read
+  yet) or cleared it (`nil`), because the change reaches the reader's later
+  reads, not this one.
   """
   @spec stored_change_note(String.t(), map() | nil, map() | non_neg_integer() | nil) ::
           String.t()
   def stored_change_note(reader, nil, _hidden), do: "reader #{reader}'s stored view is cleared"
 
   def stored_change_note(reader, _spec, hidden) do
-    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden || 0
+    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden
 
     "this view is now reader #{reader}'s stored view for its later reads (events, watch, digest, trends, " <>
-      "trace, timeline, changes, mutations) until --view-clear; it hid #{hidden} events here"
+      "trace, timeline, changes, mutations) until --view-clear" <>
+      if(hidden, do: "; it hid #{hidden} events here", else: "")
   end
 
   defp describe_spec(spec) do

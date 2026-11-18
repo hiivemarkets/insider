@@ -471,9 +471,20 @@ defmodule Insider.Live.Owner do
              Map.put(subscription, :stored, given == :keep and subscription.view != nil),
            {:ok, session} <- add_subscriber(session, pid, subscription) do
         subscriber = Map.fetch!(session.subscribers, pid)
-        session = seen(session, subscriber.reader, subscriber.sent_cursor, store_view(reading))
+        store = store_view(reading)
+        previous = get_in(session, [:readers, subscriber.reader, :view])
+        session = seen(session, subscriber.reader, subscriber.sent_cursor, store)
         state = schedule_push(%{state | session: session})
-        {{:ok, subscription(session, subscriber)}, state}
+        reply = subscription(session, subscriber)
+
+        # A subscription that kept or cleared the stored view says so, as a
+        # read does; it has read nothing yet, so it counts nothing hidden.
+        reply =
+          if subscriber.reader && store != :keep && store != previous,
+            do: Map.put(reply, "view_note", View.stored_change_note(reader, store, nil)),
+            else: reply
+
+        {{:ok, reply}, state}
       else
         {:error, error} -> {{:error, error}, state}
       end
@@ -2533,7 +2544,7 @@ defmodule Insider.Live.Owner do
         Map.put(
           batch,
           "view_note",
-          View.stored_change_note(reader, given, get_in(batch, ["filtered", "view"]))
+          View.stored_change_note(reader, given, get_in(batch, ["filtered", "view"]) || %{})
         )
   end
 

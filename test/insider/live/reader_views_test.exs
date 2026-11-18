@@ -291,6 +291,18 @@ defmodule Insider.Live.ReaderViewsTest do
 
     assert {:ok, %{"readers" => []}} = Live.status(id)
 
+    # baseline --show and --clear read nothing, so they have no view to keep.
+    for action <- ["show", "clear"] do
+      assert {:error, %{"code" => "invalid_options", "field" => "view_keep"}} =
+               Live.baseline(id, %{
+                 action => true,
+                 "reader" => "hunt",
+                 "view" => @warning,
+                 "view_keep" => true
+               }),
+             action
+    end
+
     # view_keep false is the default.
     assert {:ok, _batch} =
              Live.events_since(id, 0, %{
@@ -306,12 +318,15 @@ defmodule Insider.Live.ReaderViewsTest do
     assert {:ok, %{"view" => @warning} = subscription} =
              Live.subscribe(id, self(), %{"reader" => "hunt", "view" => @warning})
 
+    refute Map.has_key?(subscription, "view_note")
+
     refute Map.has_key?(subscription, "stored_view")
     assert_receive {:insider_live_events, ^id, batch}, 3_000
     assert [_warning] = hunt_events(batch)
     assert {:ok, %{"readers" => [%{"name" => "hunt", "view" => nil}]}} = Live.status(id)
 
-    assert {:ok, _subscription} =
+    # Keeping it says so in the reply, as a read that keeps a view does.
+    assert {:ok, kept} =
              Live.subscribe(id, self(), %{
                "reader" => "hunt",
                "view" => @warning,
@@ -319,7 +334,22 @@ defmodule Insider.Live.ReaderViewsTest do
                "cursor" => 0
              })
 
+    assert kept["view_note"] ==
+             "this view is now reader hunt's stored view for its later reads (events, watch, digest, trends, " <>
+               "trace, timeline, changes, mutations) until --view-clear"
+
+    refute Map.has_key?(kept, "stored_view")
     assert {:ok, %{"readers" => [%{"name" => "hunt", "view" => @warning}]}} = Live.status(id)
+
+    # The same view kept again is no news.
+    assert {:ok, again} =
+             Live.subscribe(id, self(), %{
+               "reader" => "hunt",
+               "view" => @warning,
+               "view_keep" => true
+             })
+
+    refute Map.has_key?(again, "view_note")
 
     # Subscribing again without a view goes on through the stored one, and says so.
     assert {:ok, %{"view" => @warning, "stored_view" => stored}} =
@@ -335,6 +365,12 @@ defmodule Insider.Live.ReaderViewsTest do
                    3_000
 
     assert [_warning] = hunt_events(pushed)
+
+    # Subscribing with an empty view clears it, and says so.
+    assert {:ok, cleared} = Live.subscribe(id, self(), %{"reader" => "hunt", "view" => %{}})
+    assert cleared["view_note"] == "reader hunt's stored view is cleared"
+    refute Map.has_key?(cleared, "stored_view")
+    assert {:ok, %{"readers" => [%{"name" => "hunt", "view" => nil}]}} = Live.status(id)
   end
 
   # A read's --view-kind silently became the reader's view and hid 1,266

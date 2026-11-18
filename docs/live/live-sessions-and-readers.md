@@ -290,7 +290,7 @@ A stored view narrows later reads that do not name it, so Insider always says wh
 
 - A result that a stored view narrowed carries `"stored_view"` at the top level: `"reader"`, the `"view"`, `"hidden"` (the events it hid from this read, or `nil` where the read does not count them), and `"note"`. The note reads `reader claude's stored view (kinds …, kept with --view-keep) hid N events from this read; --view-clear clears it`. Events and pushed batches, digest, trends, trace, timeline, changes, mutations, baseline, and a subscription's reply all carry it.
 - `--human` text starts with that note as `Note: …`, and compact output starts with it as `# note: …`. A compact `watch` prints it once, before its `# subscribed` line.
-- A read that stored or cleared the reader's view carries `"view_note"`: `this view is now reader claude's stored view for its later reads … until --view-clear; it hid N events here`, or `reader claude's stored view is cleared`. Its `--human` text and compact output start with it too.
+- A read that stored or cleared the reader's view carries `"view_note"`: `this view is now reader claude's stored view for its later reads … until --view-clear; it hid N events here`, or `reader claude's stored view is cleared`. Its `--human` text and compact output start with it too. A subscription's reply carries it without the count, since it has read nothing yet, and a compact `watch` prints it before its `# subscribed` line. `baseline --show` and `--clear` read nothing, so they refuse `"view_keep"`.
 
 ### Signature, service, route and trace views
 

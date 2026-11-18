@@ -702,7 +702,8 @@ defmodule Insider.Live.Options do
   @doc """
   The options of `baseline`: mark the anomalies of the window `"since"`
   (default #{@baseline_since}) normal, or `"show"` or `"clear"` the
-  baseline (at most one of them).
+  baseline (at most one of them). Only marking reads a window, so only it
+  takes `"view_keep"`.
   """
   @spec baseline(term()) :: {:ok, map()} | {:error, map()}
   def baseline(options) when is_map(options) and not is_struct(options) do
@@ -712,13 +713,16 @@ defmodule Insider.Live.Options do
              Map.take(options, ["human", "reader", "since", "view", "view_keep"]),
              @baseline_since
            ) do
+      store = digest.store
+
       case {Map.get(options, "clear", false), Map.get(options, "show", false)} do
         {true, true} -> invalid("clear")
+        {clear, _show} when not is_boolean(clear) -> invalid("clear")
+        {_clear, show} when not is_boolean(show) -> invalid("show")
+        {false, false} -> {:ok, Map.put(digest, :action, :set)}
+        _no_read when store -> invalid("view_keep")
         {true, false} -> {:ok, Map.put(digest, :action, :clear)}
         {false, true} -> {:ok, Map.put(digest, :action, :show)}
-        {false, false} -> {:ok, Map.put(digest, :action, :set)}
-        {clear, _show} when not is_boolean(clear) -> invalid("clear")
-        _show -> invalid("show")
       end
     end
   end

@@ -670,6 +670,27 @@ defmodule Insider.Lab.LiveFormatTest do
              text |> IO.iodata_to_binary() |> String.split("\n")
   end
 
+  test "a compact watch that kept or cleared its reader's view says so before its subscribed line" do
+    for note <- [
+          "this view is now reader hunt's stored view for its later reads (events, watch, digest, trends, " <>
+            "trace, timeline, changes, mutations) until --view-clear",
+          "reader hunt's stored view is cleared"
+        ] do
+      subscribed = %{
+        "kind" => "subscribed",
+        "target" => "shop@host",
+        "result" => %{"session_id" => "live-1"},
+        "subscription" => %{"cursor" => 0, "view_note" => note}
+      }
+
+      assert {:text, text} = Format.render("watch", %{format: "compact"}, subscribed)
+      expected = "# note: " <> note
+
+      assert [^expected, "# subscribed " <> _ | _rest] =
+               text |> IO.iodata_to_binary() |> String.split("\n")
+    end
+  end
+
   test "watch lines, and the digest's human text" do
     subscribed = %{
       "kind" => "subscribed",

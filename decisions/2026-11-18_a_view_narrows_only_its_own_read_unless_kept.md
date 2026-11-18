@@ -7,7 +7,8 @@ read, or the subscription, that gives it, even when the read names a reader.
 It never changes that reader's stored view on its own.
 
 - A reader stores a view only by asking: `"view_keep" => true` (observer
-  `--view-keep`) with a reader name and a non-empty view. Any other use of
+  `--view-keep`) with a reader name and a non-empty view, on a read that
+  reads (so not `baseline` with `"show"` or `"clear"`). Any other use of
   `"view_keep"` is refused with `invalid_options`, field `view_keep`.
 - An empty view (`"view" => %{}`, observer `--view-clear`) clears the stored
   view, as before. `--view-clear` together with other view flags replaces the
@@ -21,7 +22,9 @@ It never changes that reader's stored view on its own.
   mutations, baseline, and a subscription's reply. A compact `watch` prints
   the note once, before it subscribes.
 - A read that stores or clears the stored view carries `"view_note"`, which
-  is also its first line of text.
+  is also its first line of text. A subscription that stores or clears it
+  carries the note in its reply, and a compact `watch` prints it before it
+  subscribes.
 - The existing fields stay: `"reader"`, `"view"`, `filtered.view`,
   `"filtered_view"`, and `"view_note"`.
 
