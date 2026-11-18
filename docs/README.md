@@ -5,6 +5,13 @@ This is the index of Insider's reference documentation. The
 short synopsis. The [cheat sheet](cheat-sheet.md) has the commands you use
 most, and the [glossary](glossary.md) defines the terms.
 
+Insider ships as two Hex packages, always at the same version. `insider_lab`
+is the CLI: the `insider-lab` escript and the Mix tasks such as
+`mix insider.live`. Install it with `mix escript.install hex insider_lab`
+to observe a node. `insider` is the core library. It has no Mix tasks, and
+an app adds it only for its agents or for Tidewave. See
+[insider vs insider_lab](glossary.md#insider-vs-insider_lab).
+
 ## Contents
 
 - [How to use this index](#how-to-use-this-index)
@@ -36,10 +43,11 @@ README describes.
 
 | If you need to … | Read | Size |
 |---|---|---|
-| Run the commands you use most | [Cheat sheet](cheat-sheet.md) | ~115 lines |
-| Look up a term | [Glossary](glossary.md) | ~265 lines |
-| Install the CLI from Hex, or add Insider to your app | [Install the CLI](getting-started.md#1-install-the-cli), [Add Insider to your app](getting-started.md#add-insider-to-your-app) | ~16 + ~22 lines |
-| Make first contact with a node you start | [Observe a running node in five minutes](getting-started.md#observe-a-running-node-in-five-minutes) | ~112 lines |
+| Run the commands you use most | [Cheat sheet](cheat-sheet.md) | ~128 lines |
+| Look up a term | [Glossary](glossary.md) | ~289 lines |
+| Choose between `insider` and `insider_lab` | [insider vs insider_lab](glossary.md#insider-vs-insider_lab) | ~20 lines |
+| Install the CLI from Hex, or add Insider to your app | [Install the CLI](getting-started.md#1-install-the-cli), [Add Insider to your app](getting-started.md#add-insider-to-your-app) | ~25 + ~27 lines |
+| Make first contact with a node you start | [Observe a running node in five minutes](getting-started.md#observe-a-running-node-in-five-minutes) | ~120 lines |
 | Make first contact with a node you did not start | [Attach to a node you did not start](getting-started.md#attach-to-a-node-you-did-not-start), then [Load Insider into the target](live/live-api-and-transports.md#load-insider-into-the-target) | ~18 + ~29 lines |
 | Know what the welcome document gives an agent | [Welcome document](live/live-welcome-and-reports.md#welcome-document) | ~67 lines |
 | Find the commands for a symptom | [Welcome recipes](live/live-welcome-and-reports.md#welcome-recipes) | ~62 lines |
@@ -122,9 +130,9 @@ observation stay denied.
 
 | File | What it holds | Size |
 |---|---|---|
-| [Getting started](getting-started.md) | Installing the CLI, the five-minute quick start, a node you did not start, the Tidewave variant, adding Insider to your app, repository setup, and a host `AGENTS.md` snippet. | ~207 lines |
-| [Cheat sheet](cheat-sheet.md) | The most-used observer commands, by task. | ~115 lines |
-| [Glossary](glossary.md) | Terms, and the ones that mean different things in Live, the Lab and the load harness. | ~265 lines |
+| [Getting started](getting-started.md) | Which package to install, installing the CLI, the five-minute quick start, a node you did not start, the Tidewave variant, adding Insider to your app, repository setup, and a host `AGENTS.md` snippet. | ~221 lines |
+| [Cheat sheet](cheat-sheet.md) | The most-used observer commands, by task. | ~128 lines |
+| [Glossary](glossary.md) | The two packages, the terms, and the ones that mean different things in Live, the Lab and the load harness. | ~289 lines |
 | [Insider Live: API and transports](live/live-api-and-transports.md) | Functions and start options, environment, lease, cleanup receipt, Tidewave, and the observer node and its flags. | ~580 lines |
 | [Insider Live: sessions, readers and marks](live/live-sessions-and-readers.md) | Cursors and gaps, Recorder shares, subscriptions, several readers, amendment, handoff, marks, the pairing chart, and event time. | ~483 lines |
 | [Insider Live: digest, filters and trends](live/live-digest-filters-and-trends.md) | The digest, its hints and baseline, summary trends, filters, summaries, views, and severity. | ~580 lines |

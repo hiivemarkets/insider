@@ -7,6 +7,36 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-18
+
+A documentation and packaging release: every entry point says which of the
+two packages does what.
+
+### Changed
+
+- The two Hex packages now name each other. The `insider` package's
+  description says that the command-line observer and its Mix tasks ship
+  separately as `insider_lab`, and its hex.pm page links
+  "CLI (insider_lab)". The `insider_lab` description says that it is the
+  command-line observer for `insider`, and its page links "Core (insider)".
+- The README, Getting started, the documentation index, the cheat sheet,
+  the glossary (a new entry, "insider vs insider_lab"), `usage-rules.md`,
+  the Lab README, and the `Insider`, `Insider.Live` and
+  `Mix.Tasks.Insider.Live` moduledocs say which package to install for
+  what. Install `insider_lab` to observe a node, with no dependency in the
+  app. Add `insider` to an app only for its agents or for Tidewave. The core
+  has no Mix tasks, so `mix insider.live` in an app that depends only on
+  `insider` reports that the task could not be found, and these documents
+  say so and name `insider-lab live` instead. The two always release at the
+  same version.
+- The cheat sheet and `usage-rules.md` now write observer commands as
+  `insider-lab live`, the escript from Hex, and mention `mix insider.live`
+  only for an Insider checkout.
+- The welcome's first quick-start step, a new `transports.observer.package`
+  field, and the observer's `--help` name `insider_lab` as the observer and
+  say that the `insider` package has no Mix tasks. The welcome's `hash`
+  changes accordingly.
+
 ## [0.1.1] - 2026-11-18
 
 A patch release: the quick start works on an app without Phoenix.

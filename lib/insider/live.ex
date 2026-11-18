@@ -1,6 +1,9 @@
 defmodule Insider.Live do
   @moduledoc """
-  Transport-agnostic live observation of the node it runs in.
+  Transport-agnostic live observation of the node it runs in. The CLI that
+  drives it from outside is the separate `insider_lab` package
+  (`mix escript.install hex insider_lab`, then `insider-lab live`). This
+  package has no Mix tasks.
 
   One live collector session records bounded Logger, Telemetry, and Poller
   evidence. A supervised owner under `Insider.Supervisor`, never the caller,

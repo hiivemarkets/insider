@@ -27,7 +27,16 @@ does not depend on Insider: the observer loads Insider into it at run time.
 
 ### 1. Install the CLI
 
-The CLI is the Lab escript, `insider-lab`. Install it from Hex:
+Insider ships as two Hex packages, always at the same version:
+
+- **`insider_lab`** is the CLI: the `insider-lab` escript and the Mix tasks
+  (`mix insider.live` and the others). Install it to observe a node. Most
+  people need only this, and the app needs no dependency.
+- **`insider`** is the core library that the CLI loads into the node. It
+  has no Mix tasks. Add it to your app only for its agents or for Tidewave.
+  See [Add Insider to your app](#add-insider-to-your-app).
+
+Install the CLI from Hex:
 
 ```sh
 mix escript.install hex insider_lab
@@ -129,13 +138,13 @@ and
 The full flag reference is under
 [Observer flag reference](live/live-api-and-transports.md#observer-flag-reference),
 and `insider-lab live --help` prints it. The [cheat sheet](cheat-sheet.md)
-has the commands you use most. It writes them as `mix insider.live`, the
-same commands from a checkout.
+has the commands you use most.
 
 ## Add Insider to your app
 
 Observation needs no dependency: `--load` pushes the observer's own Insider
-into the node. Add Insider to your app only if you want one of these:
+into the node. Add the core, `insider`, to your app only if you want one of
+these:
 
 - The agent guides and the usage rules under `deps/insider/`, for the
   agents of your app and for `mix usage_rules.sync`.
@@ -153,6 +162,10 @@ The node then starts its own Insider. The observer works with it. It
 reports `same_build: false` when the two copies were compiled apart, and
 `--load` does not replace the node's copy. See
 [Load Insider into the target](live/live-api-and-transports.md#load-insider-into-the-target).
+
+The core gives your app no Mix task. `mix insider.live` in your app reports
+`The task "insider.live" could not be found`, because that task is in
+`insider_lab`. Keep running `insider-lab live` from the escript.
 
 ## Work on the Insider repository
 
@@ -191,7 +204,8 @@ This app can be observed while it runs with Insider Live, in development only.
   `insider-lab live welcome --node my_app@$(hostname -s) --cookie-file ~/.my_app.cookie`
   (`--full` for the whole reference, `insider-lab live --help` for the
   flags), or `Insider.Live.JSON.welcome()` through Tidewave `project_eval`.
-  Install the CLI with `mix escript.install hex insider_lab`.
+  Install the CLI with `mix escript.install hex insider_lab`. The CLI is the
+  `insider_lab` package. This app has no `mix insider.live` task.
 - Loop: start one session, act, then read `events_since` from your cursor.
   Stop the session when you are done.
 - You must report Insider bugs and anything that behaves differently from the

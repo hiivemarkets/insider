@@ -1060,7 +1060,8 @@ defmodule Insider.Live.Welcome do
   @reader_active_s div(Owner.bounds()["reader_active_ms"], 1_000)
   @stopped_readable_s div(Owner.bounds()["stopped_readable_ms"], 1_000)
   @quick_start_steps [
-    "1. Get the observer. From Hex: mix escript.install hex insider_lab installs the insider-lab escript (put the directory Mix prints on PATH); then run insider-lab live in place of #{@observer_command}, from any directory. " <>
+    "1. Get the observer. It is the CLI of the insider_lab package. The insider package, the library in this node, has no Mix tasks, so an app that depends only on insider has no #{@observer_command}. " <>
+      "From Hex: mix escript.install hex insider_lab installs the insider-lab escript (put the directory Mix prints on PATH); then run insider-lab live in place of #{@observer_command}, from any directory. " <>
       "In an Insider checkout: run #{@observer_command} from tools/insider_lab, or build the escript there once (mix escript.build) and run ./insider-lab live. " <>
       "Every form takes the same operations, flags and output. Set N=(--node NAME@HOST --cookie-file PATH) (the cookie file must be mode 0600). " <>
       "Parse stdout alone: it carries only the JSON, and Mix prints its Compiling and \"Waiting for lock on the build directory\" notices on stderr, which a tool that merges the two streams puts in front of the JSON. " <>
@@ -2430,6 +2431,8 @@ defmodule Insider.Live.Welcome do
       "observer" => %{
         "invocation" => @observer_command,
         "escript" => @observer_escript,
+        "package" =>
+          "insider_lab: the escript and #{@observer_command}. The insider package, the library in the node, has no Mix tasks. Both release at the same version.",
         "escript_install" =>
           "mix escript.install hex insider_lab, then insider-lab live OPERATION",
         "escript_build" =>

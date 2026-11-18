@@ -140,7 +140,17 @@ defmodule Insider.ProductionArtifactBoundaryTest do
     project = File.read!(Path.join(@root, "mix.exs"))
 
     refute project =~ "escript:"
-    refute project =~ "insider_lab"
+    refute project =~ "{:insider_lab"
+    refute project =~ "tools/insider_lab"
+    refute Enum.any?(Mix.Project.config()[:deps], &(elem(&1, 0) == :insider_lab))
+
+    # The package metadata names the Lab, so hex.pm sends a reader to the
+    # CLI: the description's last sentence and the "CLI (insider_lab)" link.
+    # No other line of the project may name it.
+    mentions = Regex.scan(~r/^.*insider_lab.*$/m, project) |> List.flatten()
+
+    assert [_description, _link] = mentions
+    assert Enum.all?(mentions, &(&1 =~ ~r/"as insider_lab\."|"CLI \(insider_lab\)"/))
 
     for dependency <- ["sentry", "datadog", "req", "finch", "tesla", "hackney"] do
       refute project =~ ~s({:#{dependency},)

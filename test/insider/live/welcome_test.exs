@@ -697,6 +697,43 @@ defmodule Insider.Live.WelcomeTest do
       end
     end
 
+    # The core and the CLI are two Hex packages. An agent in an app that
+    # depends only on `insider` finds no `mix insider.live` there, so the
+    # welcome, and every entry-point document, names the package that has
+    # it and says the core has no Mix tasks.
+    test "the welcome and the entry-point documents name both packages" do
+      [first_step | _rest] = Live.welcome()["quick_start"]["steps"]
+      observer = full()["transports"]["observer"]
+
+      for text <- [first_step, observer["package"]] do
+        assert text =~ "insider_lab"
+        assert text =~ "The insider package, the library in"
+        assert text =~ "has no Mix tasks"
+      end
+
+      assert observer["package"] =~ "same version"
+
+      for path <- [
+            "README.md",
+            "usage-rules.md",
+            "docs/README.md",
+            "docs/getting-started.md",
+            "docs/glossary.md",
+            "docs/cheat-sheet.md"
+          ] do
+        text = String.replace(File.read!(path), ~r/\s+/, " ")
+        assert text =~ "insider_lab", path
+        assert text =~ "no Mix tasks", path
+      end
+
+      for module <- [Insider, Insider.Live] do
+        {:docs_v1, _, _, _, %{"en" => moduledoc}, _, _} = Code.fetch_docs(module)
+        [first_paragraph | _rest] = String.split(moduledoc, "\n\n")
+        assert first_paragraph =~ "insider_lab", inspect(module)
+        assert first_paragraph =~ "mix escript.install hex insider_lab", inspect(module)
+      end
+    end
+
     test "the recipes start with a digest and cover latency, log floods, crash loops, 5xx, mailboxes, memory, binary and port leaks, amendments, agents, unknown event names, frontend actions, and failing calls" do
       [first | _rest] = all = Live.welcome()["recipes"]
       recipes = Map.new(all, &{&1["symptom"] |> String.split(":") |> hd(), &1})

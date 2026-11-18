@@ -2102,9 +2102,13 @@ defmodule Insider.Lab.LiveObserverTest do
       end
     end
 
-    test "--help names the Hex install of the escript and the checkout route", _context do
+    test "--help names both packages, the Hex install of the escript and the checkout route",
+         _context do
       {0, text} = help(["--help"])
       flat = String.replace(text, ~r/\s+/, " ")
+
+      assert flat =~ "This observer is the insider_lab package."
+      assert flat =~ "The insider package, the library it loads into the node, has no Mix tasks."
 
       assert flat =~
                "Install from Hex: mix escript.install hex insider_lab, then run insider-lab live OPERATION"

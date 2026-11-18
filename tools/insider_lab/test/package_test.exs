@@ -30,7 +30,22 @@ defmodule InsiderLab.PackageTest do
     assert File.read!(Path.join(@lab, "THIRD_PARTY_NOTICES.md")) =~
              "LICENSES/BSD-3-Clause-recon.txt"
 
-    assert Map.keys(package[:links]) |> Enum.sort() == ["Changelog", "Docs", "GitHub"]
+    assert package[:links] == %{
+             "GitHub" => "https://github.com/hiivemarkets/insider",
+             "Changelog" => "https://github.com/hiivemarkets/insider/blob/main/CHANGELOG.md",
+             "Docs" => "https://hexdocs.pm/insider_lab",
+             "Core (insider)" => "https://hex.pm/packages/insider"
+           }
+  end
+
+  # The hex.pm page shows the description and the links, never the README:
+  # it says this is the CLI for the core, and links the core.
+  test "the description says the Lab is the command-line observer for insider" do
+    description = Mix.Project.config()[:description]
+
+    assert description =~ "The command-line observer for insider"
+    assert description =~ "insider-lab"
+    assert String.length(description) <= 300
   end
 
   test "in this repository the Lab builds against the core by path, with the shared paths" do

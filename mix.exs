@@ -1,7 +1,7 @@
 defmodule Insider.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @source_url "https://github.com/hiivemarkets/insider"
 
   # Modules none of whose work can run below OTP 28: they need isolated
@@ -25,7 +25,8 @@ defmodule Insider.MixProject do
       description:
         "The BEAM accessory for agents, by agents. A runtime-evidence library that attaches " <>
           "to a running development node and gives a coding agent a bounded, masked window " <>
-          "of what the node did: structured events, request traces and process snapshots.",
+          "of what the node did. The command-line observer and its Mix tasks ship separately " <>
+          "as insider_lab.",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       test_coverage: [
@@ -243,7 +244,8 @@ defmodule Insider.MixProject do
       links: %{
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md",
-        "Docs" => "https://hexdocs.pm/insider"
+        "Docs" => "https://hexdocs.pm/insider",
+        "CLI (insider_lab)" => "https://hex.pm/packages/insider_lab"
       }
     ]
   end

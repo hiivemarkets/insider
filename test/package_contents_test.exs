@@ -26,7 +26,7 @@ defmodule Insider.PackageContentsTest do
     assert File.regular?(Path.join(@root, "docs/README.md"))
   end
 
-  test "the package names its license, ships it, and links the source, changelog, and docs" do
+  test "the package names its license, ships it, and links the source, changelog, docs, and CLI" do
     config = Mix.Project.config()
     package = config[:package]
 
@@ -38,8 +38,20 @@ defmodule Insider.PackageContentsTest do
     assert package[:links] == %{
              "GitHub" => config[:source_url],
              "Changelog" => config[:source_url] <> "/blob/main/CHANGELOG.md",
-             "Docs" => "https://hexdocs.pm/insider"
+             "Docs" => "https://hexdocs.pm/insider",
+             "CLI (insider_lab)" => "https://hex.pm/packages/insider_lab"
            }
+  end
+
+  # The hex.pm page shows the description and the links, never the README.
+  # Someone who adds `insider` and looks for `mix insider.live` learns there
+  # that the observer and its Mix tasks are the other package.
+  test "the description names insider_lab as the command-line observer" do
+    description = Mix.Project.config()[:description]
+
+    assert description =~ "The command-line observer and its Mix tasks ship separately"
+    assert description =~ "insider_lab"
+    assert String.length(description) <= 300
   end
 
   test "hexdocs source links point at the release tag" do
