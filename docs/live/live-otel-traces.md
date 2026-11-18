@@ -321,9 +321,9 @@ store and the lookback together hold at most 8 MiB on the target. Events that fe
 trace's `lost`. Insider keeps these loss counters for the 2,048 traces whose counters were updated last. Past that,
 the least recently updated counter goes, counted in `status`'s `retention.loss_counters_evicted`.
 
-Default retention never costs what `--retain` and `retain_traces` keep. An automatic trace that turns notable stays
-automatic until the pool lets it go, and only then takes its reason. Past the store's bounds, slow traces go first,
-then failed, then mutation traces. A kept trace's `retention.pinned` names its reason, and its text says
+Default retention never costs what `--retain` and `retain_traces` keep. With `retain_traces`, every new trace joins
+the automatic pool, a notable one too, and takes its reason only when the pool lets it go. Past the store's bounds,
+slow traces go first, then failed, then mutation traces. A kept trace's `retention.pinned` names its reason, and its text says
 `Retained: kept because it failed`, `kept because it was slow (≥ 500 ms)`, or `kept because it ran a GraphQL
 mutation`. `status`'s `retention` adds `keep_failed_and_slow`, `keep_mutations`, `failed_traces`, `slow_traces`,
 `mutation_traces`, each pool's `*_traces_max`, `slow_trace_ms`, `mutation_lookback_max` (the lookback's events, for

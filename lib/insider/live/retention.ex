@@ -40,9 +40,11 @@ defmodule Insider.Live.Retention do
   # are kept for the @max_rolled traces updated last; past that the least
   # recently updated goes, counted as `loss_counters_evicted` (that
   # trace's later loss is then unknown). Default retention never costs
-  # what `--retain` and `retain_traces` keep: an automatic trace that turns
-  # notable stays automatic until the pool lets it go, and only then takes
-  # its reason; past the store's bounds default traces go first.
+  # what `--retain` and `retain_traces` keep: with `retain_traces`, a new
+  # trace joins the automatic pool even when its first event is notable,
+  # and an automatic trace that is notable stays automatic until the pool
+  # lets it go, and only then takes its reason; past the store's bounds
+  # default traces go first.
   #
   # Bounded at @max_entries events and @max_bytes of external term size in
   # all, plus the lookback's own bounds. Past a bound the least recently
@@ -212,19 +214,19 @@ defmodule Insider.Live.Retention do
             |> mark(trace_id, reason)
             |> bound()
 
-          reason != nil ->
-            {earlier, retention} = take_lookback(retention, trace_id)
-            {{lost, _sequence}, rolled} = Map.pop(retention.rolled, trace_id, {0, nil})
-
-            %{retention | rolled: rolled}
-            |> add(trace_id, reason)
-            |> update_in([Access.key(:traces), trace_id, :lost], &(&1 + lost))
-            |> append(trace_id, earlier ++ [entry])
-            |> trim_pool(reason)
+          # With `retain_traces`, a new trace joins the automatic pool even
+          # when its first event is notable; it remembers the reason and
+          # takes it when the pool lets it go, so the default never costs
+          # what `retain_traces` keeps.
+          retention.limit > 0 ->
+            retention
+            |> admit(trace_id, :auto, reason, entry)
+            |> mark(trace_id, reason)
+            |> trim()
             |> bound()
 
-          retention.limit > 0 ->
-            retention |> add(trace_id, :auto) |> append(trace_id, [entry]) |> trim() |> bound()
+          reason != nil ->
+            retention |> admit(trace_id, reason, reason, entry) |> trim_pool(reason) |> bound()
 
           defaults?(retention) ->
             remember(retention, trace_id, entry)
@@ -233,6 +235,21 @@ defmodule Insider.Live.Retention do
             retention
         end
     end
+  end
+
+  # A new kept trace. A notable one takes its earlier events from the
+  # lookback, and what fell out of it as `lost`.
+  defp admit(retention, trace_id, pin, nil, entry),
+    do: retention |> add(trace_id, pin) |> append(trace_id, [entry])
+
+  defp admit(retention, trace_id, pin, _reason, entry) do
+    {earlier, retention} = take_lookback(retention, trace_id)
+    {{lost, _sequence}, rolled} = Map.pop(retention.rolled, trace_id, {0, nil})
+
+    %{retention | rolled: rolled}
+    |> add(trace_id, pin)
+    |> update_in([Access.key(:traces), trace_id, :lost], &(&1 + lost))
+    |> append(trace_id, earlier ++ [entry])
   end
 
   # The strongest default reason `event` gives to keep its trace, or `nil`.

@@ -279,8 +279,13 @@ defmodule Insider.Live.RetentionTest do
         |> Retention.start(0)
         |> Retention.sweep(read(0, 3, [entry(1, @a), entry(2, @b), stop(3, @a)]))
 
+      # With room in the pool it comes back automatic, with its events;
+      # when the pool lets it go it becomes a mutation trace.
       assert receipts(retention, @a) == [1, 3]
-      assert %{"pinned" => "mutation", "lost" => 0} = Retention.info(retention, @a)
+      assert %{"pinned" => "auto", "lost" => 0} = Retention.info(retention, @a)
+      released = Retention.set_limit(retention, 0)
+      assert receipts(released, @a) == [1, 3]
+      assert %{"pinned" => "mutation", "lost" => 0} = Retention.info(released, @a)
     end
 
     # Default mutation retention must never cost what
@@ -436,6 +441,31 @@ defmodule Insider.Live.RetentionTest do
       retention = Retention.sweep(retention, read(3, 4, [span(4, @a, 900)]))
       assert %{"pinned" => "mutation", "events" => 4} = Retention.info(retention, @a)
       assert %{"slow_traces" => 0, "failed_traces" => 0} = Retention.describe(retention)
+    end
+
+    # A trace whose first event was an error went straight to the
+    # 16-trace failed pool, even with room in --retain-traces: the 17th
+    # let the first go. Default retention must never cost what
+    # retain_traces keeps.
+    test "with retain_traces, a trace whose first event fails or is slow joins the automatic pool" do
+      max = Retention.bounds()["failed_traces_max"]
+      firsts = [&failed(&1, id(&1)), &span(&1, id(&1), 900)]
+
+      for first <- firsts do
+        events = for n <- 1..(max + 1), do: first.(n)
+        retention = notable(64) |> Retention.sweep(read(0, max + 1, events))
+
+        assert %{"pinned" => "auto"} = Retention.info(retention, id(1))
+        assert %{"traces" => traces, "evicted_traces" => 0} = Retention.describe(retention)
+        assert traces == max + 1
+
+        # When the pool lets them go they take their reason, within its bound.
+        released = Retention.set_limit(retention, 0)
+        assert Retention.info(released, id(1)) == nil
+        assert %{"pinned" => reason} = Retention.info(released, id(max + 1))
+        assert reason in ["failed", "slow"]
+        assert %{"traces" => ^max, "evicted_traces" => 1} = Retention.describe(released)
+      end
     end
 
     test "an automatic trace that fails stays automatic until the pool lets it go" do
