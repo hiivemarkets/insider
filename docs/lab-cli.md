@@ -64,6 +64,11 @@ bounds, and exit-status table, so callers need no prose scraping. The bounds
 include parser shape, decoder worker, buffered-helper, stream, and dispatcher
 ceilings.
 
+`insider-lab` alone, `--help`, `-h`, or `help` prints a short text that
+names these modes and `insider-lab live`, the observer, and exits `0`. Any
+other argument is a `usage` error (`insider.cli.error/v1`, exit `64`) whose
+`help` field is `insider-lab --help`.
+
 The standalone dispatcher implements only `runtime.capabilities`. So callers
 can see that every other runtime operation is unavailable until a host injects
 an executor. This separates protocol membership from deployed availability.

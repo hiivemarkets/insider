@@ -7,8 +7,10 @@ The most-used observer commands, grouped by task. They run the CLI from the
 and run the commands from any directory. Your app needs no dependency, and
 the core package, `insider`, has no Mix tasks. In an Insider checkout, write
 `mix insider.live` in place of `insider-lab live`, from `tools/insider_lab`.
-Replace `SESSION_ID`, `TRACE_ID`, and the pid with the values that earlier
-commands print.
+`insider-lab --help` describes the escript, and `insider-lab live --help`
+lists every operation. Help and the commands the observer prints in hints
+name the form you ran. Replace `SESSION_ID`, `TRACE_ID`, and the pid with
+the values that earlier commands print.
 
 ## Contents
 

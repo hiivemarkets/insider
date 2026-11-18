@@ -35,8 +35,10 @@ invocations, and a longer guide.
   `capabilities` carries a pointer with the delivered hash. Every ok document
   carries `installation.same_build`, `insider_version` and `insider_commit`;
   the whole installation report comes with `capabilities`, a load, or
-  another build. `mix insider.live --help` and `help OPERATION` print the
-  flags with their value syntax and examples, without a target.
+  another build. `insider-lab live --help` (or `mix insider.live --help`)
+  and `help OPERATION` print the flags with their value syntax and
+  examples, without a target; `insider-lab --help` describes the escript.
+  Help and the commands in hints and `next` fields name the form you ran.
 - Parse stdout alone. It carries only the observer's documents; Mix prints
   its `Compiling` and `Waiting for lock on the build directory` notices
   (several `mix` commands in one checkout share that lock) on stderr. If

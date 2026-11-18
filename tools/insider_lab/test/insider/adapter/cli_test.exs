@@ -145,7 +145,7 @@ defmodule Insider.Adapter.CLITest do
     end
   end
 
-  test "one-shot runner handles discovery, stdin states, and usage without prose" do
+  test "one-shot runner handles discovery, stdin states, and usage" do
     assert {discovery, 0} = CLI.run_once(["--discover"], fn _maximum -> :eof end)
     assert Jason.decode!(discovery)["schema"] == "insider.cli.discovery/v1"
 
@@ -159,8 +159,38 @@ defmodule Insider.Adapter.CLITest do
     assert {failed, 64} = CLI.run_once(["--json"], fn _maximum -> {:error, :closed} end)
     assert Jason.decode!(failed)["error"]["code"] == "input_failed"
 
-    assert {usage, 64} = CLI.run_once([], fn _maximum -> :eof end)
+    assert {usage, 64} = CLI.run_once(["frobnicate"], fn _maximum -> :eof end)
     assert Jason.decode!(usage)["error"]["code"] == "usage"
+  end
+
+  test "no arguments, --help, -h and help print the escript's help and exit 0" do
+    for arguments <- [[], ["--help"], ["-h"], ["help"]] do
+      assert {text, 0} = CLI.run_once(arguments, fn _maximum -> flunk("help reads no input") end)
+
+      assert text =~ "the command-line observer for Insider"
+      assert text =~ "insider-lab live OPERATION"
+      assert text =~ "insider-lab live --help"
+      assert text =~ ~s(insider-lab live capabilities "${N[@]}" --load)
+
+      for mode <- ["--discover", "--json", "--ndjson"],
+          do: assert(text =~ "insider-lab #{mode}", mode)
+
+      refute text =~ "mix insider.live"
+      refute String.starts_with?(text, "{")
+    end
+  end
+
+  test "an unknown command is a usage error that names --help" do
+    for arguments <- [["frobnicate"], ["--frobnicate"], ["--json", "extra"]] do
+      assert {usage, 64} = CLI.run_once(arguments, fn _maximum -> :eof end)
+
+      assert Jason.decode!(usage) == %{
+               "schema" => "insider.cli.error/v1",
+               "status" => "invalid_input",
+               "error" => %{"code" => "usage"},
+               "help" => "insider-lab --help"
+             }
+    end
   end
 
   test "CLI routing returns transport status and contains writer failure" do
@@ -518,6 +548,25 @@ defmodule Insider.Adapter.CLITest do
     assert Enum.map(recovered_frames, & &1["status"]) == ["invalid_input", "unsupported"]
   end
 
+  test "the executable prints its help, and the observer's help in the escript's form", context do
+    {help, "", 0} = cli(context, [])
+    assert help =~ "insider-lab live --help"
+
+    for arguments <- [["--help"], ["-h"], ["help"]],
+        do: assert({^help, "", 0} = cli(context, arguments))
+
+    {usage, "", 64} = cli(context, ["frobnicate"])
+    assert Jason.decode!(usage)["help"] == "insider-lab --help"
+
+    {live, "", 0} = cli(context, ["live", "--help"])
+    assert live =~ "insider-lab live: observe a running BEAM node"
+    assert live =~ ~s(insider-lab live capabilities "${N[@]}" --load)
+    refute live =~ ~s(mix insider.live capabilities)
+
+    {live_usage, "", 64} = cli(context, ["live", "frobnicate"])
+    assert Jason.decode!(live_usage)["error"]["details"]["help"] == "insider-lab live --help"
+  end
+
   defp cli(context, args, input \\ "") do
     stdin = Path.join(context.subprocess_directory, "stdin")
     stdout = Path.join(context.subprocess_directory, "stdout")
@@ -525,13 +574,12 @@ defmodule Insider.Adapter.CLITest do
     File.write!(stdin, input)
 
     command =
-      ~S["$INSIDER_ESCRIPT" "$INSIDER_CLI_ARG" < "$INSIDER_STDIN" > "$INSIDER_STDOUT" 2> "$INSIDER_STDERR"]
+      ~S["$INSIDER_ESCRIPT" "$@" < "$INSIDER_STDIN" > "$INSIDER_STDOUT" 2> "$INSIDER_STDERR"]
 
     {_shell_output, status} =
-      System.cmd("sh", ["-c", command],
+      System.cmd("sh", ["-c", command, "sh" | args],
         env: [
           {"INSIDER_ESCRIPT", context.escript},
-          {"INSIDER_CLI_ARG", List.first(args)},
           {"INSIDER_STDIN", stdin},
           {"INSIDER_STDOUT", stdout},
           {"INSIDER_STDERR", stderr}

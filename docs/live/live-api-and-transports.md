@@ -266,7 +266,7 @@ For a node that you did not start, see [Load Insider into the target](#load-insi
 
 ### Observe from the command line
 
-Run every command from `tools/insider_lab` in a checkout. With the escript from Hex (`mix escript.install hex insider_lab`), run `insider-lab live` in place of `mix insider.live`, from any directory. `mix insider.live --help` (or `help`) prints the operations, the quick start, and the target flags as text and exits `0`. `mix insider.live help OPERATION`, or `OPERATION --help`, prints that operation's flags with their value syntax and examples. Neither needs a target.
+Run every command from `tools/insider_lab` in a checkout. With the escript from Hex (`mix escript.install hex insider_lab`), run `insider-lab live` in place of `mix insider.live`, from any directory. `insider-lab --help`, or `insider-lab` alone, prints what the escript does and its commands, and exits `0`. `mix insider.live --help` (or `help`) prints the operations, the quick start, and the target flags as text and exits `0`. `mix insider.live help OPERATION`, or `OPERATION --help`, prints that operation's flags with their value syntax and examples. Neither needs a target. Help, usage errors, and the commands that the target prints (hints, `next` fields, `Next:` lines, the welcome's examples) name the form you ran: `insider-lab live` for the escript, `mix insider.live` for the Mix task. A sentence about the Mix task itself, such as "run `mix insider.live` from `tools/insider_lab`", stays as written.
 
 ```sh
 N=(--node "my_app@$(hostname -s)" --cookie-file "$HOME/.my_app.cookie")

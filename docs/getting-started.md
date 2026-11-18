@@ -44,6 +44,8 @@ mix escript.install hex insider_lab
 
 Mix installs it in its escripts directory, usually `~/.mix/escripts`, and
 prints that directory. Add it to your `PATH`. Install again to update.
+`insider-lab --help` then says what the escript does and names its
+commands.
 
 In an Insider checkout, use the Mix task from `tools/insider_lab` instead:
 `mix insider.live` takes the same operations and flags as
@@ -137,8 +139,10 @@ and
 
 The full flag reference is under
 [Observer flag reference](live/live-api-and-transports.md#observer-flag-reference),
-and `insider-lab live --help` prints it. The [cheat sheet](cheat-sheet.md)
-has the commands you use most.
+and `insider-lab live --help` prints it. Help and the commands that the
+observer prints in hints name the form you ran: `insider-lab live` for the
+escript, `mix insider.live` for the Mix task. The
+[cheat sheet](cheat-sheet.md) has the commands you use most.
 
 ## Add Insider to your app
 
