@@ -134,11 +134,14 @@ defmodule Insider.Lab.Live.Format do
 
   defp welcome_line(_document), do: []
 
+  # A watch that goes on through its reader's stored view says so once,
+  # before it subscribes, rather than on every pushed batch.
   defp watch_lines(%{"kind" => "subscribed"} = line) do
     subscription = line["subscription"] || %{}
 
     [
       welcome_line(line),
+      note_lines([get_in(subscription, ["stored_view", "note"])]),
       hash_line([
         "subscribed",
         {"session", get_in(line, ["result", "session_id"])},
@@ -186,7 +189,8 @@ defmodule Insider.Lab.Live.Format do
   @doc """
   One line per event of `batch`, then its `#` line. Read by `events`
   (the default), it also says how to continue a cut read; pushed to `watch`,
-  whose stream goes on by itself, it does not.
+  whose stream goes on by itself, it does not. A read through the reader's
+  stored view, or one that kept or cleared it, says so first.
   """
   @spec batch_lines(map(), :events | :watch) :: iodata()
   def batch_lines(batch, operation \\ :events) do
@@ -206,22 +210,19 @@ defmodule Insider.Lab.Live.Format do
         {"filtered", filtered(batch["filtered"])}
       ])
 
-    # A read that set or cleared its reader's stored view says so first.
-    note =
-      case batch["view_note"] do
-        note when is_binary(note) -> ["# note: ", note, "\n"]
-        _none -> []
-      end
+    stored = if operation == :events, do: get_in(batch, ["stored_view", "note"])
 
     [
+      note_lines([stored, batch["view_note"]]),
       events,
-      note,
       trailer,
       lost_line(batch),
       if(operation == :events, do: more_line(batch), else: []),
       Enum.map(batch["hints"] || [], &hint_line/1)
     ]
   end
+
+  defp note_lines(notes), do: for(note <- notes, is_binary(note), do: ["# note: ", note, "\n"])
 
   # A cursor read after an eviction can look like it returned unrelated
   # events. The range's evicted events, why, and

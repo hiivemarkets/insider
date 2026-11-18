@@ -2613,20 +2613,75 @@ defmodule Insider.Lab.LiveObserverTest do
             ~w(digest --since latest-60s --human),
             ~w(trends),
             ["trace", "--trace-id", String.duplicate("b", 32)],
-            ~w(timeline --pid <0.1.0>)
+            ~w(timeline --pid <0.1.0>),
+            ~w(changes),
+            ~w(mutations),
+            ~w(baseline)
           ] do
-        assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => ^expected}}}} =
+        # A view narrows only the read that gives it.
+        assert {:ok,
+                %{arguments: %{options: %{"reader" => "agent-a", "view" => ^expected} = options}}} =
                  CLI.parse(arguments ++ view ++ target),
+               inspect(arguments)
+
+        refute Map.has_key?(options, "view_keep")
+
+        # --view-keep makes it the reader's stored view.
+        assert {:ok, %{arguments: %{options: %{"view" => ^expected, "view_keep" => true}}}} =
+                 CLI.parse(arguments ++ view ++ ["--view-keep"] ++ target),
                inspect(arguments)
       end
 
-      assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => %{}}}}} =
+      assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => %{}} = options}}} =
                CLI.parse(~w(digest --reader agent-a --view-clear) ++ target)
+
+      refute Map.has_key?(options, "view_keep")
+
+      # --view-clear with other view flags replaces the stored view with them.
+      assert {:ok,
+              %{
+                arguments: %{
+                  options: %{"view" => %{"kinds" => ["phoenix.*"]}, "view_keep" => true}
+                }
+              }} =
+               CLI.parse(~w(digest --reader agent-a --view-clear --view-kind phoenix.*) ++ target)
 
       assert {:ok, %{arguments: %{options: options}}} =
                CLI.parse(~w(digest --reader agent-a) ++ target)
 
       refute Map.has_key?(options, "view")
+    end
+
+    # A view that silently became the reader's stored view hid 1,071 events
+    # from a later trace; keeping one now takes --view-keep, which needs a
+    # reader to keep it for and a view to keep.
+    test "--view-keep needs --reader and a view flag", _context do
+      target = ~w(--node app@localhost --cookie-file /x --session s)
+
+      assert {:error, "invalid_options",
+              %{"option" => "--view-keep", "problem" => "missing", "missing" => ["--reader"]} =
+                details} =
+               CLI.parse(~w(events --cursor 0 --view-min-severity warning --view-keep) ++ target)
+
+      assert details["expected"] =~ "--reader"
+
+      assert {:error, "invalid_options",
+              %{"option" => "--view-keep", "problem" => "missing", "missing" => missing}} =
+               CLI.parse(
+                 ~w(trace --trace-id #{String.duplicate("b", 32)} --reader a --view-keep) ++
+                   target
+               )
+
+      assert "--view-min-severity" in missing and "--view-kind" in missing
+      refute "--view-clear" in missing
+
+      assert {:error, "invalid_options", %{"option" => "--view-keep", "problem" => "missing"}} =
+               CLI.parse(~w(digest --reader a --view-clear --view-keep) ++ target)
+
+      assert {:error, "invalid_options", %{"option" => "--view-keep", "accepted_by" => by}} =
+               CLI.parse(~w(mark --label x --view-keep) ++ target)
+
+      assert "events" in by and "watch" in by
     end
 
     test "--reader, --force, and amend's recording flags reach the target's options", _context do

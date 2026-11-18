@@ -62,7 +62,7 @@ defmodule Insider.Lab.Live.CLI do
     :view_route,
     :view_trace
   ]
-  @view_options @view_repeatable ++ [:view_min_severity, :view_clear]
+  @view_options @view_repeatable ++ [:view_min_severity, :view_clear, :view_keep]
   # Every read names its reader and reads through its view.
   @reading [:reader] ++ @view_options
   # The Poller's options (`Insider.Live.PollerOptions`).
@@ -218,6 +218,7 @@ defmodule Insider.Lab.Live.CLI do
     view_route: [:string, :keep],
     view_trace: [:string, :keep],
     view_clear: [:boolean, :keep],
+    view_keep: [:boolean, :keep],
     disclosure: [:string, :keep],
     poller_interval_ms: [:integer, :keep],
     top_processes: [:integer, :keep],
@@ -409,6 +410,7 @@ defmodule Insider.Lab.Live.CLI do
          :ok <- present(options, target_required ++ required),
          :ok <- target_complete(options),
          :ok <- single(options),
+         :ok <- view_keep(options),
          {:ok, timeout_ms} <- timeout(options),
          {:ok, target} <- target(options),
          {:ok, arguments} <- operation_arguments(operation, options) do
@@ -1126,24 +1128,53 @@ defmodule Insider.Lab.Live.CLI do
     end)
   end
 
-  # A read-time view, for every read. Without view flags, a named reader
-  # reads through its own view; `--view-clear` (alone) clears it.
+  # A read-time view, for every read: it narrows only this read. Without
+  # view flags, a named reader reads through its stored view; `--view-keep`
+  # makes the view given the stored view, and so does `--view-clear` with
+  # other view flags (it replaces the stored view with them), while
+  # `--view-clear` alone clears it.
   defp put_view(map, options) do
-    view =
-      %{}
-      |> put_list("sources", Keyword.get_values(options, :view_source))
-      |> put_list("kinds", Keyword.get_values(options, :view_kind))
-      |> put_list("exclude_kinds", Keyword.get_values(options, :view_exclude_kind))
-      |> put_value("min_severity", Keyword.get(options, :view_min_severity))
-      |> put_list("exclude_signatures", Keyword.get_values(options, :view_exclude_signature))
-      |> put_list("services", Keyword.get_values(options, :view_service))
-      |> put_list("routes", Keyword.get_values(options, :view_route))
-      |> put_list("traces", Keyword.get_values(options, :view_trace))
+    view = view(options)
+    clear? = Keyword.get(options, :view_clear, false)
+
+    keep? =
+      Keyword.get(options, :view_keep, false) or (clear? and Keyword.has_key?(options, :reader))
 
     cond do
+      view != %{} and keep? -> Map.merge(map, %{"view" => view, "view_keep" => true})
       view != %{} -> Map.put(map, "view", view)
-      Keyword.get(options, :view_clear, false) -> Map.put(map, "view", %{})
+      clear? -> Map.put(map, "view", %{})
       true -> map
+    end
+  end
+
+  defp view(options) do
+    %{}
+    |> put_list("sources", Keyword.get_values(options, :view_source))
+    |> put_list("kinds", Keyword.get_values(options, :view_kind))
+    |> put_list("exclude_kinds", Keyword.get_values(options, :view_exclude_kind))
+    |> put_value("min_severity", Keyword.get(options, :view_min_severity))
+    |> put_list("exclude_signatures", Keyword.get_values(options, :view_exclude_signature))
+    |> put_list("services", Keyword.get_values(options, :view_service))
+    |> put_list("routes", Keyword.get_values(options, :view_route))
+    |> put_list("traces", Keyword.get_values(options, :view_trace))
+  end
+
+  # `--view-keep` keeps a view for a reader: it needs both.
+  defp view_keep(options) do
+    cond do
+      not Keyword.get(options, :view_keep, false) ->
+        :ok
+
+      view(options) == %{} ->
+        missing = Enum.map(@view_options -- [:view_clear, :view_keep], &option_name/1)
+        invalid("--view-keep", "missing", %{"missing" => missing})
+
+      not Keyword.has_key?(options, :reader) ->
+        invalid("--view-keep", "missing", %{"missing" => ["--reader"]})
+
+      true ->
+        :ok
     end
   end
 
