@@ -58,6 +58,9 @@ in a host app, or `guides/` in an Insider checkout.
   stops and amends; `amend` changes recording options for everyone without
   losing history; never `--force` a stop over a peer's active reads without
   asking. Concurrent agents use the escript (`insider-lab live`).
+- A `--view-*` flag narrows only the read that gives it. `--view-keep` keeps
+  it as your reader's stored view; a later read narrowed by it carries
+  `stored_view` and starts with a note that names it. `--view-clear` drops it.
 - Disclosure depends on the node's profile. Check the welcome's
   `effective_disclosure.profile` (also `runtime.disclosure_profile`) before
   you rely on any payload. Development and test default to `rich`: events

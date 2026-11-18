@@ -94,6 +94,12 @@ A read without `--session` uses the node's active session. `stop`, `amend`
 and `otlp-receive` still need `--session`. See
 [Default session](live/live-api-and-transports.md#default-session).
 
+A `--view-*` flag, such as `--view-min-severity warning`, narrows only the
+read that gives it, even with `--reader`. Add `--view-keep` to keep it as
+your reader's view for later reads, which then start with a note that names
+it; `--view-clear` drops it. See
+[Stored views](live/live-sessions-and-readers.md#stored-views).
+
 ### 4. Or use Tidewave `project_eval`
 
 In a Phoenix development server with Tidewave, evaluate the same operations

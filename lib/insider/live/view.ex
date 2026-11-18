@@ -126,9 +126,10 @@ defmodule Insider.Live.View do
         }
       },
       "note" =>
-        "narrows only this reader's events, never what is recorded; hidden events advance the cursor and are " <>
+        "narrows only this read, never what is recorded; hidden events advance the cursor and are " <>
           "counted in filtered.view, per view filter (services, routes, and traces together as scope). " <>
-          "A named reader's view is kept for its later reads; an empty view clears it"
+          "With view_keep and a reader it becomes the reader's stored view for its later reads; " <>
+          "an empty view clears the stored view"
     }
   end
 
@@ -269,6 +270,49 @@ defmodule Insider.Live.View do
   @spec add(map() | nil, map() | nil) :: map()
   def add(left, right),
     do: Map.merge(left || %{}, right || %{}, fn _filter, a, b -> a + b end)
+
+  @doc """
+  What a reader's stored view did to a read that gave no view of its own:
+  the reader, the stored view's spec, how many events it hid (`nil` when
+  the read does not count them), and a note that names `--view-clear`.
+  `hidden` is a count map (`filtered.view`), a count, or `nil`.
+  """
+  @spec stored(String.t(), map(), map() | non_neg_integer() | nil) :: map()
+  def stored(reader, spec, hidden) do
+    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden
+    effect = if hidden, do: "hid #{hidden} events from this read", else: "narrows this read"
+
+    %{
+      "reader" => reader,
+      "view" => spec,
+      "hidden" => hidden,
+      "note" =>
+        "reader #{reader}'s stored view (#{describe_spec(spec)}, kept with --view-keep) #{effect}; " <>
+          "--view-clear clears it"
+    }
+  end
+
+  @doc """
+  Said by a read that kept `spec` (which hid `hidden` events, a count map
+  or a count) or cleared it (`nil`), because the change reaches the
+  reader's later reads, not this one.
+  """
+  @spec stored_change_note(String.t(), map() | nil, map() | non_neg_integer() | nil) ::
+          String.t()
+  def stored_change_note(reader, nil, _hidden), do: "reader #{reader}'s stored view is cleared"
+
+  def stored_change_note(reader, _spec, hidden) do
+    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden || 0
+
+    "this view is now reader #{reader}'s stored view for its later reads (events, watch, digest, trends, " <>
+      "trace, timeline, changes, mutations) until --view-clear; it hid #{hidden} events here"
+  end
+
+  defp describe_spec(spec) do
+    spec
+    |> Enum.sort()
+    |> Enum.map_join("; ", fn {key, values} -> "#{key} #{Enum.join(List.wrap(values), ", ")}" end)
+  end
 
   @doc "The trace id an event belongs to, or `nil`."
   @spec trace_id(map()) :: String.t() | nil

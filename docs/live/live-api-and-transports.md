@@ -423,9 +423,9 @@ mix insider.live amend "${N[@]}" --session SESSION_ID --reset watch-process --re
 
 ### Read flags
 
-Nine operations read a session through a reader's view: `events`, `watch`, `digest`, `baseline`, `trends`, `trace`, `timeline`, `changes`, and `mutations`. Each takes `--reader NAME` and the nine view flags. These view flags are repeatable: `--view-source`, `--view-kind`, `--view-exclude-kind`, `--view-exclude-signature`, `--view-service`, `--view-route`, and `--view-trace`. `--view-min-severity` may appear once, and `--view-clear` is a boolean.
+Nine operations read a session through a reader's view: `events`, `watch`, `digest`, `baseline`, `trends`, `trace`, `timeline`, `changes`, and `mutations`. Each takes `--reader NAME` and the ten view flags. These view flags are repeatable: `--view-source`, `--view-kind`, `--view-exclude-kind`, `--view-exclude-signature`, `--view-service`, `--view-route`, and `--view-trace`. `--view-min-severity` may appear once, and `--view-clear` and `--view-keep` are booleans.
 
-A view narrows only your own read. See [Filters, summaries, and views](live-digest-filters-and-trends.md#filters-summaries-and-views).
+A view narrows only the read that gives it. `--view-keep` (with `--reader` and a view flag) keeps it as your stored view for your later reads, which then start with a note that names it; `--view-clear` clears it. See [Filters, summaries, and views](live-digest-filters-and-trends.md#filters-summaries-and-views) and [Stored views](live-sessions-and-readers.md#stored-views).
 
 Cursors and windows:
 

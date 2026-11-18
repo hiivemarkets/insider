@@ -21,6 +21,7 @@ meaning and tells them apart.
   - [Gap](#gap)
   - [Reader](#reader)
   - [View](#view)
+  - [Stored view](#stored-view)
   - [Mark](#mark)
   - [Window](#window)
   - [Baseline](#baseline)
@@ -144,10 +145,18 @@ caller adds `--force`. See
 
 A view narrows what a read shows, by source, kind, and minimum severity. It
 never changes what the session records. A per-read view applies to one read
-(`--view-source`, `--view-kind`, `--view-min-severity`). A stored view is a
-named reader's own view, which later reads by that reader use. See
+only, even with `--reader` (`--view-source`, `--view-kind`,
+`--view-min-severity`).
+
+### Stored view
+
+A stored view is a named reader's view that later reads by that reader
+apply when they give no view of their own. A read stores one only with
+`--view-keep` (`"view_keep"`), and `--view-clear` clears it. A result that a
+stored view narrowed carries `"stored_view"` and starts its text with a
+`Note:` line. See
 [Filters, summaries, and views](live/live-digest-filters-and-trends.md#filters-summaries-and-views)
-and [Several agents on one session](live/live-sessions-and-readers.md#several-agents-on-one-session).
+and [Stored views](live/live-sessions-and-readers.md#stored-views).
 
 ### Mark
 

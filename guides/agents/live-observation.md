@@ -101,7 +101,10 @@ if `capabilities` later reports another hash, read the welcome again.
   (`"reader"`); `status` lists each named reader's cursor and when it last
   read. Join a running session from cursor `latest` instead of stopping it.
 - Recording options (components, events, measurements, filters) apply to
-  every reader. A view applies only to your own read. To change what is
+  every reader. A view applies only to the read that gives it; `--view-keep`
+  keeps it as your reader's stored view, and your later reads without view
+  flags then apply it and say so first (`stored_view`, a `Note:` or
+  `# note:` line). `--view-clear` clears it. To change what is
   recorded, `amend` the running session: its history and every cursor stay,
   and every reader sees a `live.session_amended` event.
 - `stop` refuses with `readers_active` while another named reader is
