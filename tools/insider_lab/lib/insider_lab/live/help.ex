@@ -1,22 +1,23 @@
 defmodule Insider.Lab.Live.Help do
   @moduledoc false
 
-  # The observer's usage text (`mix insider.live --help`, `help OPERATION`,
-  # and `OPERATION --help`), built from the welcome document's own tables:
-  # the quick start, the observer commands with their summaries and examples,
-  # and each flag's value syntax. It needs no target, so it shows this
-  # checkout's Insider; `welcome --full` shows the target's.
+  # The observer's usage text (`--help`, `help OPERATION`, and `OPERATION
+  # --help`), built from the welcome document's own tables: the quick start,
+  # the observer commands with their summaries and examples, and each flag's
+  # value syntax. Each text names the command it was run with (`invocation`:
+  # `mix insider.live` or `insider-lab live`), and the welcome's commands are
+  # rewritten to it (`Insider.Lab.Live.Invocation`); the sentence on running
+  # the Mix task in a checkout always names the Mix task. It needs no target,
+  # so it shows this checkout's Insider; `welcome --full` shows the target's.
 
+  alias Insider.Lab.Live.Invocation
   alias Insider.Live.Welcome
 
-  @command "mix insider.live"
-
-  @spec command() :: String.t()
-  def command, do: @command
+  @mix_task "mix insider.live"
 
   @doc "The overview: usage, the quick start, the operations, the target flags, and the tools to pair with."
-  @spec overview() :: String.t()
-  def overview do
+  @spec overview(String.t()) :: String.t()
+  def overview(invocation) do
     contract = Welcome.contract()
     quick_start = contract["quick_start"]
     pairs = contract["pairs_with"]
@@ -26,12 +27,12 @@ defmodule Insider.Lab.Live.Help do
 
     lines(
       [
-        "#{@command}: observe a running BEAM node on this machine with Insider Live.",
+        "#{invocation}: observe a running BEAM node on this machine with Insider Live.",
         "",
         "Usage:",
-        "  #{@command} OPERATION [--node NAME@HOST --cookie-file PATH] [OPTIONS]",
-        "  #{@command} help OPERATION      flags, values and examples for one operation",
-        "  #{@command} welcome \"${N[@]}\" --full   the whole reference, read from the target",
+        "  #{invocation} OPERATION [--node NAME@HOST --cookie-file PATH] [OPTIONS]",
+        "  #{invocation} help OPERATION      flags, values and examples for one operation",
+        "  #{invocation} welcome \"${N[@]}\" --full   the whole reference, read from the target",
         "",
         "Quick start (#{quick_start["setup"]}):"
       ] ++
@@ -55,20 +56,21 @@ defmodule Insider.Lab.Live.Help do
             exit_statuses() <> ".",
           "This observer is the insider_lab package. The insider package, the library it loads into the node, has no Mix tasks. " <>
             "Install from Hex: mix escript.install hex insider_lab, then run insider-lab live OPERATION from any directory. " <>
-            "In an Insider checkout: run #{@command} from tools/insider_lab, or build the escript there (mix escript.build) " <>
+            "In an Insider checkout: run #{@mix_task} from tools/insider_lab, or build the escript there (mix escript.build) " <>
             "and run ./insider-lab live OPERATION. Every form takes the same flags. Several agents at once, or a tool that " <>
             "merges stderr into stdout: use the escript; it starts no Mix, so it prints no Mix notices and never waits on the build lock."
         ]
     )
+    |> Invocation.rewrite(invocation)
   end
 
   @doc "One operation's summary, flags with their value syntax, and examples."
-  @spec operation(String.t()) :: String.t()
-  def operation(name) do
+  @spec operation(String.t(), String.t()) :: String.t()
+  def operation(name, invocation) do
     command = Enum.find(Welcome.observer_commands(), &(&1["name"] == name))
 
     lines(
-      ["#{@command} #{name}: #{command["summary"]}"] ++
+      ["#{invocation} #{name}: #{command["summary"]}"] ++
         section("Required:", flags(name, command["required"])) ++
         section("Options:", flags(name, command["optional"])) ++
         target(name, command["target"]) ++
@@ -76,9 +78,10 @@ defmodule Insider.Lab.Live.Help do
         [
           "",
           "\"${N[@]}\" is #{Welcome.contract()["quick_start"]["setup"]}. " <>
-            "#{@command} --help lists every operation; #{@command} welcome \"${N[@]}\" --full is the whole reference."
+            "#{invocation} --help lists every operation; #{invocation} welcome \"${N[@]}\" --full is the whole reference."
         ]
     )
+    |> Invocation.rewrite(invocation)
   end
 
   @doc """

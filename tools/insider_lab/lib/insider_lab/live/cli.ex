@@ -14,6 +14,7 @@ defmodule Insider.Lab.Live.CLI do
   alias Insider.Lab.Live.Format
   alias Insider.Lab.Live.Help
   alias Insider.Lab.Live.Installation
+  alias Insider.Lab.Live.Invocation
   alias Insider.Lab.Live.Observer
   alias Insider.Lab.Live.Otlp
   alias Insider.Lab.Live.Reports
@@ -294,18 +295,22 @@ defmodule Insider.Lab.Live.CLI do
   returns the exit status. `--help`, `help OPERATION`, and `OPERATION
   --help` write usage text instead and return `0`.
 
-  Options: `:reports_directory` (default `Reports.default_directory/0`),
-  `:gh` (the `gh` runner, default `Reports.gh/1`), `:submission` (the
-  observer's own `Insider.Live.Report.submission/0` setting), and `:notice`
-  (where `reports submit` prints its effective authorization before its
-  first `gh` call, default standard error).
+  Options: `:invocation` (the command that was run, named in help, usage
+  errors, and the target's commands it prints: `"mix insider.live"`, the
+  default, or `"insider-lab live"`), `:reports_directory` (default
+  `Reports.default_directory/0`), `:gh` (the `gh` runner, default
+  `Reports.gh/1`), `:submission` (the observer's own
+  `Insider.Live.Report.submission/0` setting), and `:notice` (where
+  `reports submit` prints its effective authorization before its first `gh`
+  call, default standard error).
   """
   @spec run([String.t()], (iodata() -> term()), keyword()) :: non_neg_integer()
   def run(arguments, writer, options \\ [])
       when is_list(arguments) and is_function(writer, 1) and is_list(options) do
     environment = environment(options)
+    writer = Invocation.writer(writer, environment.invocation)
 
-    case parse(arguments) do
+    case parse(arguments, environment.invocation) do
       {:ok, command} ->
         execute(Map.put(command, :environment, environment), writer)
 
@@ -322,6 +327,7 @@ defmodule Insider.Lab.Live.CLI do
 
   defp environment(options) do
     %{
+      invocation: Keyword.get(options, :invocation, Invocation.default()),
       reports_directory:
         Keyword.get_lazy(options, :reports_directory, &Reports.default_directory/0),
       gh: Keyword.get(options, :gh, &Reports.gh/1),
@@ -338,53 +344,58 @@ defmodule Insider.Lab.Live.CLI do
 
   @doc """
   Parses one observer command line without running it: `{:ok, command}`,
-  `{:help, text}`, or `{:error, code, details}`. The welcome's quick start,
-  recipes, and examples are checked with it.
+  `{:help, text}`, or `{:error, code, details}`. Help and the `help` of an
+  error name `invocation`, the command that was run. The welcome's quick
+  start, recipes, and examples are checked with it.
   """
-  @spec parse([String.t()]) :: {:ok, map()} | {:help, String.t()} | {:error, String.t(), map()}
-  def parse(arguments) when arguments in [["--help"], ["-h"], ["help"]],
-    do: {:help, Help.overview()}
+  @spec parse([String.t()], String.t()) ::
+          {:ok, map()} | {:help, String.t()} | {:error, String.t(), map()}
+  def parse(arguments, invocation \\ Invocation.default())
+
+  def parse(arguments, invocation) when arguments in [["--help"], ["-h"], ["help"]],
+    do: {:help, Help.overview(invocation)}
 
   # `help OPERATION` ignores the target flags a wrapper appends, so
   # `il help trace` is not a usage error.
-  def parse(["help" | operation]),
+  def parse(["help" | operation], invocation),
     do:
       operation
       |> Enum.take_while(&(not String.starts_with?(&1, "-")))
       |> Enum.join(" ")
-      |> help()
+      |> help(invocation)
 
-  def parse(["reports", "submit" | arguments]), do: parse("reports submit", arguments)
+  def parse(["reports", "submit" | arguments], invocation),
+    do: parse_operation("reports submit", arguments, invocation)
 
-  def parse([operation | arguments])
+  def parse([operation | arguments], invocation)
       when is_map_key(@operations, operation) and operation != "reports submit",
-      do: parse(operation, arguments)
+      do: parse_operation(operation, arguments, invocation)
 
-  def parse(_arguments), do: usage()
+  def parse(_arguments, invocation), do: usage(invocation)
 
-  defp help(operation) when is_map_key(@operations, operation),
-    do: {:help, Help.operation(operation)}
+  defp help(operation, invocation) when is_map_key(@operations, operation),
+    do: {:help, Help.operation(operation, invocation)}
 
-  defp help(_operation), do: usage()
+  defp help(_operation, invocation), do: usage(invocation)
 
-  defp usage do
+  defp usage(invocation) do
     {:error, "usage",
      %{
        "operations" => Enum.sort(Map.keys(@operations)),
-       "help" => "#{Help.command()} --help"
+       "help" => "#{invocation} --help"
      }}
   end
 
-  defp parse(operation, arguments) do
+  defp parse_operation(operation, arguments, invocation) do
     {options, positional, invalid} =
       arguments |> optional_values() |> OptionParser.parse(strict: @switches)
 
     if Enum.any?(invalid, fn {flag, _value} -> flag in ["--help", "-h"] end) do
-      {:help, Help.operation(operation)}
+      {:help, Help.operation(operation, invocation)}
     else
       operation
       |> validate(options, positional, invalid)
-      |> explain(operation)
+      |> explain(operation, invocation)
     end
   end
 
@@ -429,15 +440,15 @@ defmodule Insider.Lab.Live.CLI do
   defp invalid(flag, problem, extra \\ %{}),
     do: {:error, "invalid_options", Map.merge(extra, %{"option" => flag, "problem" => problem})}
 
-  defp explain({:error, "invalid_options", details}, operation) do
+  defp explain({:error, "invalid_options", details}, operation, invocation) do
     {:error, "invalid_options",
      Map.merge(details, %{
        "expected" => expected(operation, details),
-       "help" => "#{Help.command()} help #{operation}"
+       "help" => "#{invocation} help #{operation}"
      })}
   end
 
-  defp explain(result, _operation), do: result
+  defp explain(result, _operation, _invocation), do: result
 
   defp expected(operation, %{"problem" => problem} = details)
        when problem in ["unknown", "not_accepted", "positional_argument"] do
@@ -1323,7 +1334,7 @@ defmodule Insider.Lab.Live.CLI do
            "expected" =>
              "SESSION_ID: no session is active on the node, so there is none to default to; " <>
                "start one with start, or name a stopped one with --session",
-           "help" => "#{Help.command()} help #{command.operation}"
+           "help" => "#{command.environment.invocation} help #{command.operation}"
          }}
 
       {:ok, %{} = capabilities} ->

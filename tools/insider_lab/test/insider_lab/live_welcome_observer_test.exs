@@ -507,6 +507,45 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
     assert node == context.node
   end
 
+  # The target writes its commands as `mix insider.live …`; the escript prints
+  # them as `insider-lab live …`, and leaves the sentences about the Mix task.
+  test "the escript prints the target's commands in the form it was run with", context do
+    escript = [invocation: "insider-lab live"]
+
+    {0, document} = run(["welcome" | target(context)], context, escript)
+    quick_start = document["result"]["quick_start"]
+
+    assert String.starts_with?(quick_start["load"], "insider-lab live capabilities ")
+
+    for command <- quick_start["commands"] do
+      assert command =~ "insider-lab live ", command
+      refute command =~ "mix insider.live", command
+    end
+
+    [step | _steps] = quick_start["steps"]
+    assert step =~ "then run insider-lab live in place of mix insider.live, from any directory"
+    assert step =~ "In an Insider checkout: run mix insider.live from tools/insider_lab"
+
+    {0, capabilities} = run(["capabilities" | target(context)], context, escript)
+    pointer = capabilities["result"]["welcome"]
+    assert String.starts_with?(pointer["read_with"]["observer"], "insider-lab live welcome ")
+
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    mark = ["mark" | target(context)] ++ ["--session", id, "--label", "before"]
+
+    {0, marked} = run(mark, context, escript)
+
+    assert marked["result"]["next"] ==
+             ~s(insider-lab live digest "${N[@]}" --session #{id} --since-mark --human)
+
+    {0, marked} = run(mark, context)
+
+    assert marked["result"]["next"] ==
+             ~s(mix insider.live digest "${N[@]}" --session #{id} --since-mark --human)
+  end
+
   test "reports with a target copies the node's queue, and its config can opt in", context do
     :ok =
       :peer.call(context.peer, Application, :put_env, [:insider, :live_report_submission, :github])
