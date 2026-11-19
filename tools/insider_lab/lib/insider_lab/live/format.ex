@@ -180,16 +180,22 @@ defmodule Insider.Lab.Live.Format do
   end
 
   # A watch that stopped before the session ended continues from where it
-  # stopped, with watch's own flags, or reads on with events.
+  # stopped, with watch's own flags, or reads on with events. A larger
+  # --max-events is suggested only below its most.
   @watch_stops %{
     "max_events" => "at its --max-events",
     "duration" => "at its --for",
     "interrupted" => "when it was interrupted"
   }
 
-  defp watch_more(%{"kind" => "stopped", "reason" => reason, "next_cursor" => next})
+  defp watch_more(%{"kind" => "stopped", "reason" => reason, "next_cursor" => next} = line)
        when is_map_key(@watch_stops, reason) and is_integer(next) do
-    larger = if reason == "max_events", do: " (and a larger --max-events)", else: ""
+    most = Insider.Live.Options.subscription_events_max()
+
+    larger =
+      if reason == "max_events" and is_integer(line["events"]) and line["events"] < most,
+        do: " (and a larger --max-events, up to #{most})",
+        else: ""
 
     "# more: watch stopped #{Map.fetch!(@watch_stops, reason)}; " <>
       "continue with watch --from-cursor #{next}#{larger}, or events --cursor #{next}\n"

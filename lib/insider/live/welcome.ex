@@ -167,7 +167,8 @@ defmodule Insider.Live.Welcome do
           "trends across summary windows, Logger bursts, the longest mailboxes, VM deltas (vm.target without Insider's own processes, " <>
           "memory and ETS), and the window's filtered and gaps. hints gives the next command with its reason: trace_calls (the amend " <>
           "--calls MOD.FUN/ARITY for a crash loop or repeated exception, from call_candidates), trace_calls_unavailable, and, for each " <>
-          "source the Recorder evicted, reduce_logger, reduce_telemetry, reduce_poller, and raise_capacity, plus shared_readers when " <>
+          "source the Recorder evicted, reduce_logger, reduce_telemetry, reduce_otel, reduce_poller, and raise_capacity (below the " <>
+          "Recorder's bound) or record_less (at it, or for a byte flood), plus shared_readers when " <>
           "several readers share the evicting Recorder. human adds text, a short " <>
           "plain-text summary for the developer, with one Next: line per hint."
     },
@@ -1075,6 +1076,14 @@ defmodule Insider.Live.Welcome do
   # observer's own parser.
   @reader_active_s div(Owner.bounds()["reader_active_ms"], 1_000)
   @stopped_readable_s div(Owner.bounds()["stopped_readable_ms"], 1_000)
+  # The start step's bounds come from the table `Options.start/1` checks.
+  @start_bounds Options.start_bounds()
+                |> Enum.sort()
+                |> Enum.map_join(", ", fn {option,
+                                           %{"min" => min, "max" => max, "default" => default}} ->
+                  "--#{String.replace(option, "_", "-")} #{min}..#{max} (default #{default})"
+                end)
+  @max_events_most Options.start_bounds()["max_events"]["max"]
   @quick_start_steps [
     "1. Get the observer. It is the CLI of the insider_lab package. The insider package, the library in this node, has no Mix tasks, so an app that depends only on insider has no #{@observer_command}. " <>
       "From Hex: mix escript.install hex insider_lab installs the insider-lab escript (put the directory Mix prints on PATH); then run insider-lab live in place of #{@observer_command}, from any directory. " <>
@@ -1087,7 +1096,10 @@ defmodule Insider.Live.Welcome do
       "--load never replaces another Insider: insider_version_mismatch and load_build_differs need --force-load, which ends any session, so save its evidence (events, digest, handoff) first.",
     "3. Check that the welcome's runtime.allowed is true. One session exists per node: if active_session_id is set, join it (events --cursor latest --reader NAME) rather than stopping it.",
     "4. Start one session. Without options it is quiet: Logger warning and above, OTP crash and supervisor reports, and runtime.quiet_default_telemetry_events. " <>
-      "Recording options (components, events, measurements, filters) apply to every reader of the session, and amend changes them without losing history; a --view-* flag narrows only your own read.",
+      "Recording options (components, events, measurements, filters) apply to every reader of the session, and amend changes them without losing history; a --view-* flag narrows only your own read. " <>
+      "Bounds of start and amend: #{@start_bounds}; a value outside them is refused. A lease lapses unless a read or renew comes within --lease-ms, " <>
+      "and --max-events #{@max_events_most} is the Recorder's most: when it still evicts, record less (the digest's hints say how). " <>
+      "help start lists every bounded flag.",
     "5. Measurements are opt-in in the strict profile (runtime.disclosure_profile strict, the ci default): a Telemetry event carries no duration unless you start with --telemetry-measurement duration. The rich profile returns every measurement unless that flag selects some. EVENT below is a dotted event name such as phoenix.endpoint.stop; discover lists the names the node can emit. " <>
       "Leave --telemetry-event out to record the node's quiet default events: start lists the defaults this node lacks under telemetry_skipped_defaults, and telemetry_hint says when none exists.",
     "6. Act (send the request, run the job), then digest the session for the overview (crash loops, top errors, slowest operations with exemplar receipts to open, Logger bursts, VM changes; --human for a summary to paste for the developer), trends to see how summaries moved across their windows, and read events from cursor 0 (or latest, to join without the history) for detail, passing next_cursor to the next read. Reads and digests renew the lease; --format compact prints one line per event; --reader NAME lists you in status.",
@@ -1272,8 +1284,11 @@ defmodule Insider.Live.Welcome do
         "The Recorder holds max_events events, shared out by source (recorder.source_shares_percent); a source over its share evicts its own oldest. " <>
           "The digest's hints name each source that evicted (status recorder.sources: evicted, retained_events, reserved_events, share_percent) " <>
           "and the amendment that stops it: reduce_logger summarises the module (else domain) that logged most with --logger-summary, " <>
-          "reduce_telemetry summarises the kind recorded most with --telemetry-summary, reduce_poller samples less often, and raise_capacity " <>
-          "raises --max-events when the Recorder is below its bound. An amendment starts a new Recorder segment, so each source's evicted count " <>
+          "reduce_telemetry summarises the kind recorded most with --telemetry-summary, reduce_otel raises --otel-min-duration-ms and names the span recorded most, " <>
+          "reduce_poller samples less often, and raise_capacity raises --max-events (to a larger value, never past its bound) when the Recorder is below its bound. " <>
+          "At the bound (--max-events #{@max_events_most}) a larger Recorder is not possible: record_less names the family that evicted most and the flags that record less " <>
+          "(--telemetry-summary, --logger-summary, the minimum durations, a narrower --telemetry-event list or fewer components, --exclude-origin), " <>
+          "and --retain-traces N or a mark before you reproduce keeps the request that matters. An amendment starts a new Recorder segment, so each source's evicted count " <>
           "starts again at 0: status after the next flood shows whether the amendment stopped it. " <>
           "Several readers share the one Recorder and a read keeps nothing, so with more readers (or spans from other services) it evicts sooner " <>
           "for all of them (the shared_readers hint): read digest and trends rather than every event, summarise frequent kinds, and read often."

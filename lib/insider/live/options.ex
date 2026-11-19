@@ -210,6 +210,19 @@ defmodule Insider.Live.Options do
   def correlated_bounds,
     do: %{limit: @correlated_limit["max"], max_bytes: @correlated_max_bytes["max"]}
 
+  @doc "The largest `max_events` of a subscription (`watch --max-events`), for its text."
+  @spec subscription_events_max() :: pos_integer()
+  def subscription_events_max, do: @subscription_events["max"]
+
+  @doc """
+  The bounds of the session-wide start and amend options that `start/1`
+  checks itself (`lease_ms`, `max_events`, `retain_traces`), for the welcome's
+  start step. `describe/0` has every option's.
+  """
+  @spec start_bounds() :: %{String.t() => map()}
+  def start_bounds,
+    do: %{"lease_ms" => @lease_ms, "max_events" => @max_events, "retain_traces" => @retain_traces}
+
   @spec trends_keys() :: [String.t()]
   def trends_keys, do: @trends_keys
 

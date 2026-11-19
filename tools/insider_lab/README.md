@@ -50,8 +50,11 @@ and install again to update. The escript carries the Insider of its version,
 and `--load` pushes it into a development node. Your app needs no change.
 
 `insider-lab --help` (or `insider-lab` alone) says what the escript does and
-names its commands. `insider-lab live --help` lists every observer
-operation, and `insider-lab live help OPERATION` one operation's flags. Help,
+names its commands, and `insider-lab --version` (or `-v`) prints its version
+and the version of the Insider it carries. `insider-lab live --help` lists
+every observer operation and the bounds of every bounded flag (such as
+`--lease-ms` 1,000 to 900,000 and `--max-events` 16 to 4,096), and
+`insider-lab live help OPERATION` one operation's flags. Help,
 errors, and the commands the observer prints in hints and `next` fields name
 the form you ran: `insider-lab live` for the escript, `mix insider.live` for
 the Mix task.

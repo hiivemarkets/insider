@@ -17,7 +17,10 @@ defmodule Insider.Live.Anomalies do
   # 4. `crash_loop`: each child terminated repeatedly for one reason;
   # 5. `mailbox`: the longest mailbox from @mailbox messages, and `run_queue`
   #    when the run queue reached @run_queue;
-  # 6. `evicted`: events the Recorder evicted in the window.
+  # 6. `evicted`: events the Recorder evicted in the window, with the
+  #    advice of the digest's eviction hints (`Insider.Live.Hints`): a
+  #    larger Recorder only while the session's is below its bound, else
+  #    what to record less of, naming the family that evicted most.
   #
   # Each anomaly has an `identity`: a hash of its kind and what it is about
   # (an offender and its reason fingerprint, a key, an error signature, a
@@ -67,7 +70,7 @@ defmodule Insider.Live.Anomalies do
       Enum.map(digest["crash_loops"] || [], &loop(&1, session)),
       mailboxes(digest["processes"] || [], session),
       run_queue(digest["vm"], session),
-      eviction(evicted, requests, session)
+      eviction(evicted, requests, digest["hints"] || [], session)
     ]
     |> List.flatten()
     |> Enum.reject(&is_nil/1)
@@ -552,22 +555,93 @@ defmodule Insider.Live.Anomalies do
 
   defp run_queue(_vm, _session), do: nil
 
-  defp eviction(0, _requests, _session), do: nil
+  defp eviction(0, _requests, _hints, _session), do: nil
 
-  defp eviction(evicted, requests, session) do
+  defp eviction(evicted, requests, hints, session) do
     note =
       if (requests["bursts"] || []) == [],
         do: "; a request burst or error spike among them is not counted",
         else: ""
 
+    {advice, command} = eviction_advice(hints, session)
+
     anomaly(
       "evicted",
-      "Evicted: the Recorder evicted #{evicted} events in this window#{note}. A larger Recorder, and " <>
-        "reading digest --since latest-60s more often, keep more.",
-      "#{@observer} amend \"${N[@]}\" --session #{session} --max-events 4096",
+      "Evicted: the Recorder evicted #{evicted} events in this window#{note}. " <> advice,
+      command,
       {nil, evicted, "rate"}
     )
   end
+
+  @reductions ~w(reduce_logger reduce_telemetry reduce_otel reduce_poller)
+
+  # A larger Recorder when raise_capacity offers one (its value is always
+  # above the session's and within the bound); else the amendment that
+  # records less of the source that evicted most; else, at the bound or for
+  # a byte flood (record_less), how to record less and keep the request
+  # that matters. Without hints (no session configuration), what to look at.
+  defp eviction_advice(hints, session) do
+    capacity = Enum.find(hints, &(&1["kind"] == "raise_capacity"))
+    reduce = Enum.find(hints, &(&1["kind"] in @reductions and is_binary(&1["command"])))
+    less = Enum.find(hints, &(&1["kind"] == "record_less"))
+
+    cond do
+      capacity ->
+        {"A larger Recorder keeps more: it holds #{capacity["evidence"]["max_events"]} events, and " <>
+           "--max-events #{capacity["options"]["max_events"]} is the most.", capacity["command"]}
+
+      reduce ->
+        {at_most(less) <> "Record less: #{reduction(reduce)}.", reduce["command"]}
+
+      less ->
+        {at_most(less) <>
+           "Record less#{family(less["evidence"]["dominant"])}: summarise it at record time, amend away the noisy " <>
+           "event or component, or set --retain-traces N (or mark first) before you reproduce the request " <>
+           "that matters; the record_less hint lists every flag.",
+         "#{@observer} mark \"${N[@]}\" --session #{session} --label 'before the request'"}
+
+      true ->
+        {"Record less (status recorder.sources says which source evicts), and read digest --since latest-60s more often.",
+         "#{@observer} status \"${N[@]}\" --session #{session}"}
+    end
+  end
+
+  defp at_most(%{"evidence" => %{"max_events" => max, "max_events_bound" => bound}})
+       when is_integer(max) and max >= bound,
+       do: "The Recorder is already at its most events (--max-events #{bound}). "
+
+  defp at_most(_less), do: ""
+
+  defp reduction(%{"kind" => "reduce_telemetry", "evidence" => e}),
+    do: "summarise the Telemetry event #{e["kind"]} (#{e["events"]} in this window)"
+
+  defp reduction(%{"kind" => "reduce_logger", "evidence" => e}),
+    do: "summarise the Logger messages from #{e["origin"]} (#{e["events"]} in this window)"
+
+  defp reduction(%{"kind" => "reduce_otel", "evidence" => %{"span" => span} = e})
+       when is_binary(span),
+       do:
+         "record only longer spans; #{e["events"]} in this window were #{span} " <>
+           "(--otel-min-duration-ms was #{e["otel_min_duration_ms"]})"
+
+  defp reduction(%{"kind" => "reduce_otel", "evidence" => e}),
+    do: "record only longer spans (--otel-min-duration-ms was #{e["otel_min_duration_ms"]})"
+
+  defp reduction(%{"kind" => "reduce_poller", "evidence" => e}),
+    do: "sample the Poller less often (every #{e["interval_ms"]} ms now)"
+
+  @families %{
+    "telemetry" => "the Telemetry event",
+    "otel" => "spans named",
+    "logger" => "Logger messages from"
+  }
+
+  defp family(%{"source" => source, "name" => name, "events" => count})
+       when is_binary(name) and is_map_key(@families, source),
+       do:
+         " of #{Map.fetch!(@families, source)} #{name}, which made #{count} of this window's events"
+
+  defp family(_dominant), do: ""
 
   defp evicted(gaps) do
     gaps

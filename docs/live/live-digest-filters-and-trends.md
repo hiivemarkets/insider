@@ -204,11 +204,15 @@ Call-trace hints:
 Flood hints apply to each share group that the Recorder evicted from and that holds more than its share of events or bytes (`status` `recorder.sources`, counted since the session started or was last amended):
 
 - `reduce_logger`: a `--logger-summary` rule for the module, else the domain, whose Logger messages were most in the window. The session must accept it as a rule. Insider adds it to the session's rules. Insider never summarises reports, so it counts them apart, as `evidence.reports` by kind.
-- `logger_reports`: only reports flood. It has no command, because no summary reduces reports. The reason names the kinds and points to `raise_capacity` for an event flood. For a flood over the byte share only, it says that the byte bound is fixed and that only smaller or fewer reports help.
+- `logger_reports`: only reports flood. It has no command, because no summary reduces reports. The reason names the kinds and points to `raise_capacity` for an event flood below the Recorder's bound. For a flood over the byte share only, it says that the byte bound is fixed and that only smaller or fewer reports help.
 - `reduce_telemetry`: a `--telemetry-summary` for the kind recorded most.
+- `reduce_otel`: with the `otel` component, a higher `--otel-min-duration-ms` (10 ms from 0, else twice the current value, up to 3,600,000). It names the span recorded most in the window (`evidence.span`). At 3,600,000 it has no command and points to `--exclude-origin` or dropping the component.
 - `reduce_poller`: twice the Poller interval, up to 60,000 ms.
-- `raise_capacity`: `--max-events 4096`, when `max_events` is below 4,096 and a source is over its share of events. It raises every source's share of events. The byte bound is fixed.
+- `raise_capacity`: `--max-events 4096`, when `max_events` is below 4,096 and a source is over its share of events. The value is always larger than the session's and never above 4,096. It raises every source's share of events. The byte bound is fixed.
+- `record_less`: when a larger Recorder cannot help, because `max_events` is already 4,096 or the flood is over a byte share. It has no command. `evidence.dominant` names the family that evicted most: the Telemetry kind, span name, or Logger origin of the largest flood, with its count. The reason lists the flags that record less: `--telemetry-summary`, `--logger-summary`, `--telemetry-min-duration-ms`, `--otel-min-duration-ms`, a narrower `--telemetry-event` list or fewer components, and `--exclude-origin`. To keep the request that matters, it points to `--retain-traces N` or `trace --retain` before you reproduce it, or a `mark` and `digest --since-mark`.
 - `shared_readers`: with any flood, when two or more readers (named readers and `watch` subscribers) share the session. It has no command. It has `evidence.readers` and `evidence.evicted`. It says that the readers share one Recorder and that a read keeps nothing, so each reader loses the evicted events. It advises: read `digest` and `trends` rather than every event, summarise frequent kinds, narrow each reader with a view, and read often.
+
+The digest's `evicted` anomaly follows these hints. It offers `raise_capacity`'s command only below the bound. Otherwise it gives the first flood hint's command and names its family, or, with only `record_less`, a `mark` command. Without the session's configuration it gives `status`, never a `--max-events` value.
 
 ### Hint commands
 

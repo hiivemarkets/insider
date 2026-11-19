@@ -6,7 +6,8 @@ defmodule Insider.Live.Hints do
   # Each hint is a plain map:
   #
   # - `"kind"`: `trace_calls`, `trace_calls_unavailable`, `reduce_logger`,
-  #   `reduce_telemetry`, `reduce_poller`, `raise_capacity`, or
+  #   `reduce_telemetry`, `reduce_otel`, `reduce_poller`, `raise_capacity`,
+  #   `record_less` (a flood a larger Recorder cannot help), or
   #   `shared_readers` (a flood while several readers share the Recorder);
   # - `"reason"`: why, with the counts it rests on;
   # - `"evidence"`: those counts;
@@ -30,13 +31,18 @@ defmodule Insider.Live.Hints do
   # evicted and are over their share (the flood), with the counts from
   # `status` (since the session started), and the amendment that stops it:
   # a Logger summary rule for the module (else the domain) that logged most
-  # in the window, a Telemetry summary for the kind recorded most, a slower
-  # Poller, and, when the session's Recorder is below its bound, a larger
-  # one.
+  # in the window, a Telemetry summary for the kind recorded most, a higher
+  # OpenTelemetry span minimum, a slower Poller, and, when the session's
+  # Recorder is below its bound, a larger one: always larger than the
+  # session's and never past the bound. When a larger one cannot help (the
+  # Recorder is at its bound, or the flood is over a byte share),
+  # `record_less` says so, names the family that evicted most, and lists the
+  # flags that record less.
 
   alias Insider.Collector.Calls.Tracing
   alias Insider.Live.CallsOptions
   alias Insider.Live.Filters
+  alias Insider.Live.Options
 
   @command "mix insider.live amend \"${N[@]}\""
   @error_severities ["error", "critical"]
@@ -66,6 +72,17 @@ defmodule Insider.Live.Hints do
   @text_bytes 16_384
   @functions_max 3
   @poller_interval_max 60_000
+  # A reduce_otel hint raises --otel-min-duration-ms from 0 to this many
+  # milliseconds, and doubles a set minimum, never past the option's bound.
+  @otel_min_duration_step_ms 10
+  # The span names the evidence counts; a name past these is not counted.
+  @otel_names_max 64
+  # What records less today, for a flood a larger Recorder cannot help.
+  @record_less "summarise the frequent kinds at record time (--telemetry-summary KIND, --logger-summary RULE), " <>
+                 "raise --telemetry-min-duration-ms or --otel-min-duration-ms, amend away a noisy --telemetry-event or " <>
+                 "--component, or leave out what an emitter sends with --exclude-origin ORIGIN. To keep one request whole, " <>
+                 "set --retain-traces N (or pin it with trace --retain) before you reproduce it, or mark first, reproduce " <>
+                 "only that request, and read digest --since-mark"
   # The Logger kinds a summary rule folds: messages, never reports.
   @summarisable ["logger_message", "logger_format"]
   @kind ~r/\A[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\z/
@@ -99,7 +116,7 @@ defmodule Insider.Live.Hints do
       calls_available: calls_available || availability(),
       filters: filters,
       max_events: status["max_events"],
-      max_events_bound: 4_096,
+      max_events_bound: Options.start_bounds()["max_events"]["max"],
       poller_interval_ms: get_in(status, ["poller", "interval_ms"]),
       sources: get_in(status, ["recorder", "sources"]) || %{},
       readers: status["reader_count"] || length(status["readers"] || [])
@@ -119,13 +136,21 @@ defmodule Insider.Live.Hints do
 
   @doc "An empty evidence fold."
   @spec new() :: map()
-  def new, do: %{functions: %{}, crashed: %{}, logger: %{}, logger_reports: %{}, telemetry: %{}}
+  def new,
+    do: %{
+      functions: %{},
+      crashed: %{},
+      logger: %{},
+      logger_reports: %{},
+      telemetry: %{},
+      otel: %{}
+    }
 
   @doc """
   Adds one disclosed event: a failing crash or exception event adds the
   function its stack points at, a supervisor child termination its child's
-  module, a Logger event its module (else domain), and a recorded Telemetry
-  event its kind.
+  module, a Logger event its module (else domain), a recorded Telemetry
+  event its kind, and an OpenTelemetry span its name.
   """
   @spec add(map(), map(), integer()) :: map()
   def add(evidence, %{"source" => "logger"} = event, receipt) do
@@ -143,6 +168,13 @@ defmodule Insider.Live.Hints do
       end
 
     function(evidence, event, receipt)
+  end
+
+  def add(evidence, %{"source" => "otel", "attributes" => %{"name" => name}}, _receipt)
+      when is_binary(name) do
+    if is_map_key(evidence.otel, name) or map_size(evidence.otel) < @otel_names_max,
+      do: %{evidence | otel: bump(evidence.otel, name)},
+      else: evidence
   end
 
   def add(evidence, _event, _receipt), do: evidence
@@ -487,7 +519,7 @@ defmodule Insider.Live.Hints do
 
       floods ->
         Enum.flat_map(floods, &source_hint(&1, digest, evidence, context)) ++
-          capacity(floods, context) ++ shared_readers(floods, context)
+          capacity(floods, evidence, context) ++ shared_readers(floods, context)
     end
   end
 
@@ -604,6 +636,12 @@ defmodule Insider.Live.Hints do
     ]
   end
 
+  # A span flood: record only longer spans (a span with an error status is
+  # always recorded), naming the span the window recorded most.
+  defp source_hint({"otel", s}, _digest, evidence, context) do
+    if "otel" in context.components, do: [otel_hint(s, evidence, context)], else: []
+  end
+
   defp source_hint(_source, _digest, _evidence, _context), do: []
 
   defp reports_note(reports) when map_size(reports) == 0, do: ""
@@ -634,7 +672,8 @@ defmodule Insider.Live.Hints do
           "a larger Recorder keeps more of them (raise_capacity: --max-events #{context.max_events_bound})"
 
         true ->
-          "the Recorder is at its event bound"
+          "the Recorder is already at its most events (--max-events #{context.max_events_bound}), " <>
+            "so a larger one is not possible"
       end
 
     [
@@ -654,16 +693,121 @@ defmodule Insider.Live.Hints do
   end
 
   # A larger Recorder raises every source's share of events; the byte bound
-  # is fixed, so only a flood over its event share is helped.
-  defp capacity(floods, %{max_events: max, max_events_bound: bound} = context)
-       when is_integer(max) and max < bound do
-    case Enum.filter(floods, fn {_group, s} -> over_events?(s) end) do
-      [] -> []
-      floods -> capacity_hint(floods, max, bound, context)
+  # is fixed, so only a flood over its event share is helped, and only while
+  # the session's Recorder is below its bound. Otherwise the hint is to
+  # record less.
+  defp capacity(floods, evidence, %{max_events: max, max_events_bound: bound} = context) do
+    over = Enum.filter(floods, fn {_group, s} -> over_events?(s) end)
+
+    cond do
+      over != [] and is_integer(max) and max < bound -> capacity_hint(over, max, bound, context)
+      over == [] or (is_integer(max) and max >= bound) -> [record_less(floods, evidence, context)]
+      true -> []
     end
   end
 
-  defp capacity(_floods, _context), do: []
+  defp record_less([{group, s} | _rest] = floods, evidence, context) do
+    %{max_events: max, max_events_bound: bound} = context
+    dominant = dominant(group, evidence)
+
+    why =
+      if is_integer(max) and max >= bound,
+        do:
+          "The Recorder is already at its most events (--max-events #{bound}), so a larger one is not possible",
+        else:
+          "The flood is over its byte share and the Recorder's byte bound is fixed, so more events would not help"
+
+    %{
+      "kind" => "record_less",
+      "reason" =>
+        why <>
+          "; #{group} evicted most (#{s["evicted"]})#{dominant_text(dominant)}. Record less: " <>
+          @record_less,
+      "evidence" => %{
+        "max_events" => max,
+        "max_events_bound" => bound,
+        "evicted" => Map.new(floods, fn {g, s} -> {g, s["evicted"]} end),
+        "dominant" => dominant
+      },
+      "command" => nil,
+      "options" => nil,
+      "manual" => nil
+    }
+  end
+
+  # The family a source's flood came from in this window: a Telemetry
+  # kind, a span name, or a Logger origin, with its count.
+  defp dominant("telemetry", evidence), do: top("telemetry", evidence.telemetry)
+  defp dominant("otel", evidence), do: top("otel", evidence.otel)
+
+  defp dominant("logger", evidence),
+    do: top("logger", Map.new(evidence.logger, fn {rule, n} -> {rule_text(rule), n} end))
+
+  defp dominant(group, _evidence), do: %{"source" => group, "name" => nil, "events" => nil}
+
+  defp top(source, counts) do
+    case Enum.min_by(counts, fn {name, count} -> {-count, name} end, fn -> nil end) do
+      nil -> %{"source" => source, "name" => nil, "events" => nil}
+      {name, count} -> %{"source" => source, "name" => name, "events" => count}
+    end
+  end
+
+  @family %{
+    "telemetry" => "the Telemetry event",
+    "otel" => "spans named",
+    "logger" => "Logger messages from"
+  }
+
+  defp dominant_text(%{"name" => nil}), do: ""
+
+  defp dominant_text(%{"source" => source, "name" => name, "events" => count}),
+    do: ", most of it #{Map.fetch!(@family, source)} #{name} (#{count} in this window)"
+
+  defp otel_hint(s, evidence, context) do
+    current = context.filters["otel_min_duration_ms"] || 0
+    %{"max" => most} = Filters.describe_options()["otel_min_duration_ms"]
+    span = top("otel", evidence.otel)
+
+    named =
+      if span["name"],
+        do: "; #{span["events"]} of the window's spans were #{span["name"]}",
+        else: ""
+
+    hint = %{
+      "kind" => "reduce_otel",
+      "evidence" =>
+        source_evidence("otel", s, %{
+          "span" => span["name"],
+          "events" => span["events"],
+          "otel_min_duration_ms" => current
+        }),
+      "manual" => nil
+    }
+
+    if current < most do
+      raised = if current == 0, do: @otel_min_duration_step_ms, else: min(current * 2, most)
+
+      Map.merge(hint, %{
+        "reason" =>
+          evicted("otel", s) <>
+            named <>
+            ". Record only spans of at least #{raised} ms (a span with an error status is always recorded), " <>
+            "or leave out what emits them with --exclude-origin",
+        "command" => command(context, [{"--otel-min-duration-ms", raised}]),
+        "options" => %{"otel_min_duration_ms" => raised}
+      })
+    else
+      Map.merge(hint, %{
+        "reason" =>
+          evicted("otel", s) <>
+            named <>
+            "; --otel-min-duration-ms is already #{current}, the most: leave out what emits them with " <>
+            "--exclude-origin, or amend without --component otel",
+        "command" => nil,
+        "options" => nil
+      })
+    end
+  end
 
   defp capacity_hint(floods, max, bound, context) do
     counts = Enum.map_join(floods, ", ", fn {group, s} -> "#{group} #{s["evicted"]}" end)

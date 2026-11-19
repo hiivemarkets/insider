@@ -401,7 +401,7 @@ Notes:
 - `--component` (repeatable).
 - `--telemetry-event a.b.c` (repeatable). The observer splits it on dots into the segment list. `'a.*'`, quoted, is a [prefix](live-runtime-evidence.md#telemetry-discovery).
 - `--telemetry-measurement` (repeatable). It must be in the target's `telemetry_measurements_allowed`. Otherwise the observer returns the target's `invalid_options` error unchanged.
-- `--max-events` (the Recorder bound) and `--lease-ms`.
+- `--max-events` (the Recorder bound, 16 to 4,096) and `--lease-ms` (1,000 to 900,000).
 - `--disclosure rich|strict`. It may ask for a stricter profile than the target's. A richer one returns the target's `disclosure_denied`.
 - `--retain-traces N` (0 to 64, default 0) keeps the events of the N most recently active traces apart from the Recorder. See [Pin a trace](live-otel-traces.md#pin-a-trace).
 - `--watch-write MOD.FUN/ARITY` (repeatable, 1 to 8 functions) needs the `calls` component. See [Changes of in-memory values](live-runtime-evidence.md#changes-of-in-memory-values).

@@ -112,6 +112,38 @@ defmodule Insider.Live.HintsTest do
     |> Digest.finish(nil, "shop@host")
   end
 
+  # A digest whose first batch reports 900 events the Recorder evicted.
+  defp evicted_digest(entries, context) do
+    entries
+    |> Enum.reduce(Digest.new("live-7", 0, context), fn entry, acc ->
+      gaps =
+        if entry["receipt"] == 1,
+          do: [%{"reason" => "evicted", "scope" => "receipt_range", "count" => 900}],
+          else: []
+
+      Digest.add(acc, %{"events" => [entry], "next_cursor" => entry["receipt"], "gaps" => gaps})
+    end)
+    |> Digest.finish(nil, "shop@host")
+  end
+
+  defp evicted_anomaly(digest), do: Enum.find(digest["anomalies"], &(&1["kind"] == "evicted"))
+
+  defp span(receipt, name) do
+    %{
+      "receipt" => receipt,
+      "event" => %{
+        "source" => "otel",
+        "kind" => "otel.span",
+        "severity" => "info",
+        "attributes" => %{
+          "name" => name,
+          "trace_id" => String.pad_leading("#{receipt}", 32, "0"),
+          "span_id" => String.pad_leading("#{receipt}", 16, "0")
+        }
+      }
+    }
+  end
+
   describe "the function a crash points at" do
     test "is the stack's first application frame that a call trace could trace" do
       assert Hints.frame(terminate(1)["event"]) == @target <> ".handle_call/3"
@@ -470,7 +502,7 @@ defmodule Insider.Live.HintsTest do
           "recorder" => %{"sources" => sources(flood("logger", 631, 1_200, 1_024, 25))}
         })
 
-      assert [hint] = digest(logs ++ [other], context)["hints"]
+      assert [hint, %{"kind" => "record_less"}] = digest(logs ++ [other], context)["hints"]
 
       assert %{
                "kind" => "reduce_logger",
@@ -497,7 +529,10 @@ defmodule Insider.Live.HintsTest do
     test "a Logger flood without call sites is summarised by its domain" do
       logs = for receipt <- 1..3, do: logged(receipt, "boom", nil)
       context = context(%{"recorder" => %{"sources" => flood("logger", 9, 30, 16, 25)}})
-      assert [%{"command" => command}] = digest(logs, context)["hints"]
+
+      assert [%{"command" => command}, %{"kind" => "record_less"}] =
+               digest(logs, context)["hints"]
+
       assert command =~ "--logger-summary 'domain:elixir'"
     end
 
@@ -518,7 +553,8 @@ defmodule Insider.Live.HintsTest do
           }
         })
 
-      assert [telemetry_hint, poller_hint] = digest(events, context)["hints"]
+      assert [telemetry_hint, poller_hint, %{"kind" => "record_less"}] =
+               digest(events, context)["hints"]
 
       assert %{
                "kind" => "reduce_telemetry",
@@ -604,7 +640,11 @@ defmodule Insider.Live.HintsTest do
       }
 
       context = context(%{"max_events" => 4_096, "recorder" => %{"sources" => bytes}})
-      assert [hint] = digest([logged(1, "boom", "{#{@target}, :reserve, 2}")], context)["hints"]
+
+      assert [hint, %{"kind" => "record_less"} = less] =
+               digest([logged(1, "boom", "{#{@target}, :reserve, 2}")], context)["hints"]
+
+      assert less["reason"] =~ "already at its most events (--max-events 4096)"
 
       assert %{
                "kind" => "reduce_logger",
@@ -612,6 +652,172 @@ defmodule Insider.Live.HintsTest do
              } = hint
 
       assert hint["reason"] =~ "4191577 bytes against its 25% share of 1048576 bytes"
+    end
+
+    # A sweep at --max-events 4096, the most, evicted most of its
+    # requests; a hint to raise it to 4096 changed nothing.
+    test "at the Recorder's bound, no hint offers a larger one; record_less names the family that evicted most" do
+      most = Insider.Live.Options.start_bounds()["max_events"]["max"]
+
+      events =
+        for(receipt <- 1..6, do: telemetry(receipt, "shop.repo.query")) ++
+          [telemetry(7, "phoenix.endpoint.stop")]
+
+      context =
+        context(%{
+          "max_events" => most,
+          "recorder" => %{"sources" => flood("telemetry", 50_000, 700, 614, 15)}
+        })
+
+      hints = digest(events, context)["hints"]
+
+      refute Enum.any?(hints, &(&1["kind"] == "raise_capacity"))
+      refute Enum.any?(hints, &(is_binary(&1["command"]) and &1["command"] =~ "--max-events"))
+
+      assert %{"evidence" => %{"kind" => "shop.repo.query", "events" => 6}} =
+               Enum.find(hints, &(&1["kind"] == "reduce_telemetry"))
+
+      assert %{
+               "command" => nil,
+               "evidence" => %{
+                 "max_events" => ^most,
+                 "max_events_bound" => ^most,
+                 "dominant" => %{
+                   "source" => "telemetry",
+                   "name" => "shop.repo.query",
+                   "events" => 6
+                 }
+               }
+             } = less = Enum.find(hints, &(&1["kind"] == "record_less"))
+
+      assert less["reason"] =~ "a larger one is not possible"
+      assert less["reason"] =~ "most of it the Telemetry event shop.repo.query (6 in this window)"
+
+      for flag <-
+            ~w(--telemetry-summary --logger-summary --otel-min-duration-ms --exclude-origin --retain-traces --since-mark),
+          do: assert(less["reason"] =~ flag, flag)
+    end
+
+    test "below the bound, the larger Recorder offered is larger than the session's and within the bound" do
+      most = Insider.Live.Options.start_bounds()["max_events"]["max"]
+      least = Insider.Live.Options.start_bounds()["max_events"]["min"]
+
+      for max_events <- [least, 64, div(most, 2), most - 1] do
+        context =
+          context(%{
+            "max_events" => max_events,
+            "recorder" => %{"sources" => flood("logger", 240, 60, 16, 25)}
+          })
+
+        hints = digest([logged(1, "boom", "{#{@target}, :reserve, 2}")], context)["hints"]
+
+        assert %{"options" => %{"max_events" => offered}, "command" => command} =
+                 Enum.find(hints, &(&1["kind"] == "raise_capacity")),
+               "max_events #{max_events}"
+
+        assert offered > max_events and offered <= most
+        assert command =~ "--max-events '#{offered}'"
+        refute Enum.any?(hints, &(&1["kind"] == "record_less"))
+      end
+    end
+
+    test "a span flood raises the span minimum and names the span recorded most" do
+      spans =
+        for(receipt <- 1..5, do: span(receipt, "shop.repo.query")) ++ [span(6, "GET /orders")]
+
+      otel = fn filters ->
+        context(%{
+          "components" => ["logger", "otel"],
+          "filters" => filters,
+          "recorder" => %{"sources" => flood("otel", 900, 500, 409, 10)}
+        })
+      end
+
+      hint = fn filters ->
+        Enum.find(digest(spans, otel.(filters))["hints"], &(&1["kind"] == "reduce_otel"))
+      end
+
+      assert %{
+               "command" =>
+                 "mix insider.live amend \"${N[@]}\" --session 'live-7' --otel-min-duration-ms '10'",
+               "options" => %{"otel_min_duration_ms" => 10},
+               "evidence" => %{
+                 "span" => "shop.repo.query",
+                 "events" => 5,
+                 "otel_min_duration_ms" => 0
+               }
+             } = first = hint.(%{"otel_min_duration_ms" => 0})
+
+      assert first["reason"] =~ "5 of the window's spans were shop.repo.query"
+
+      assert %{"options" => %{"otel_min_duration_ms" => 80}} =
+               hint.(%{"otel_min_duration_ms" => 40})
+
+      # A set minimum doubles, however small; 10 ms is only the step from 0.
+      for current <- [1, 4] do
+        doubled = current * 2
+
+        assert %{"options" => %{"otel_min_duration_ms" => ^doubled}} =
+                 hint.(%{"otel_min_duration_ms" => current})
+      end
+
+      assert %{"options" => %{"otel_min_duration_ms" => 3_600_000}} =
+               hint.(%{"otel_min_duration_ms" => 3_000_000})
+
+      assert %{"command" => nil, "options" => nil} =
+               at_most = hint.(%{"otel_min_duration_ms" => 3_600_000})
+
+      assert at_most["reason"] =~ "already 3600000, the most"
+
+      # Without the otel component, --otel-min-duration-ms would be refused.
+      no_otel = context(%{"recorder" => %{"sources" => flood("otel", 900, 500, 409, 10)}})
+      refute Enum.any?(digest(spans, no_otel)["hints"], &(&1["kind"] == "reduce_otel"))
+    end
+
+    test "the eviction anomaly follows the hints: a larger Recorder only below the bound, else what to record less of" do
+      events = for receipt <- 1..6, do: telemetry(receipt, "shop.repo.query")
+      flood = %{"recorder" => %{"sources" => flood("telemetry", 50_000, 700, 614, 15)}}
+
+      at_most = evicted_digest(events, context(flood))
+      below = evicted_digest(events, context(Map.put(flood, "max_events", 1_024)))
+      unknown = evicted_digest(events, nil)
+
+      assert %{"line" => line, "command" => command} = evicted_anomaly(at_most)
+      assert line =~ "Evicted: the Recorder evicted 900 events in this window"
+      assert line =~ "already at its most events (--max-events 4096)"
+      assert line =~ "summarise the Telemetry event shop.repo.query (6 in this window)"
+      refute command =~ "--max-events"
+      assert command =~ "--telemetry-summary 'shop.repo.query'"
+
+      assert %{"line" => line, "command" => command} = evicted_anomaly(below)
+      assert line =~ "it holds 1024 events"
+      assert command =~ "--max-events '4096'"
+
+      assert %{"command" => command} = evicted_anomaly(unknown)
+      refute command =~ "--max-events"
+      assert command =~ "status"
+    end
+
+    test "the eviction anomaly at the bound without an amendment to offer says to mark and record less" do
+      # Every recorded kind is already summarised, so no reduce_telemetry.
+      events = for receipt <- 1..6, do: telemetry(receipt, "shop.repo.query")
+
+      context =
+        context(%{
+          "filters" => %{"telemetry_summaries" => ["shop.repo.query"]},
+          "recorder" => %{"sources" => flood("telemetry", 50_000, 700, 614, 15)}
+        })
+
+      assert %{"line" => line, "command" => command} =
+               events |> evicted_digest(context) |> evicted_anomaly()
+
+      assert line =~ "already at its most events (--max-events 4096)"
+
+      assert line =~
+               "of the Telemetry event shop.repo.query, which made 6 of this window's events"
+
+      assert line =~ "--retain-traces N"
+      assert command =~ "mark \"${N[@]}\" --session live-7"
     end
 
     test "a summary list at its limit is explained, not extended" do

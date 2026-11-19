@@ -65,9 +65,11 @@ include parser shape, decoder worker, buffered-helper, stream, and dispatcher
 ceilings.
 
 `insider-lab` alone, `--help`, `-h`, or `help` prints a short text that
-names these modes and `insider-lab live`, the observer, and exits `0`. Any
-other argument is a `usage` error (`insider.cli.error/v1`, exit `64`) whose
-`help` field is `insider-lab --help`.
+names these modes and `insider-lab live`, the observer, and exits `0`.
+`--version` (or `-v`) prints the escript's `insider_lab` version and the
+version of the `insider` library it carries, one per line, and exits `0`.
+Any other argument is a `usage` error (`insider.cli.error/v1`, exit `64`)
+whose `help` field is `insider-lab --help`.
 
 The standalone dispatcher implements only `runtime.capabilities`. So callers
 can see that every other runtime operation is unavailable until a host injects

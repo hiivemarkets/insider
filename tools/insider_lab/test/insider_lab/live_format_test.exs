@@ -713,6 +713,23 @@ defmodule Insider.Lab.LiveFormatTest do
 
     assert {:json, ^stopped} = Format.render("watch", %{format: "json"}, stopped)
 
+    # A larger --max-events only below its most.
+    most = Insider.Live.Options.subscription_events_max()
+
+    for {events, larger} <- [{4, " (and a larger --max-events, up to #{most})"}, {most, ""}] do
+      spent = %{
+        "kind" => "stopped",
+        "reason" => "max_events",
+        "events" => events,
+        "next_cursor" => 15
+      }
+
+      assert {:text, text} = Format.render("watch", %{format: "compact"}, spent)
+
+      assert IO.iodata_to_binary(text) =~
+               "# more: watch stopped at its --max-events; continue with watch --from-cursor 15#{larger}, or events --cursor 15\n"
+    end
+
     batch = %{"kind" => "batch", "result" => %{"events" => [entry(full_event(%{}))]}}
 
     assert {:json, %{"result" => %{"events" => [lean]}}} =
