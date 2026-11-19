@@ -14,6 +14,8 @@ defmodule Insider.Lab.Live.Format do
   # result's `"text"`. Errors
   # are always JSON.
 
+  alias Insider.Lab.Live.Invocation
+
   @formats ["json", "compact", "full"]
 
   # Event fields that are the same for every event of a session, or only
@@ -57,11 +59,12 @@ defmodule Insider.Lab.Live.Format do
 
   @doc """
   The document to print as JSON for `operation`, or `{:text, iodata}` when
-  the format prints text.
+  the format prints text. `arguments` may hold the `:invocation` the
+  compact welcome line names (default `Insider.Lab.Live.Invocation.default/0`).
   """
   @spec render(String.t(), map(), map()) :: {:json, map()} | {:text, iodata()}
-  def render("events", %{format: "compact"}, document),
-    do: {:text, [welcome_line(document), batch_lines(document["result"])]}
+  def render("events", %{format: "compact"} = arguments, document),
+    do: {:text, [welcome_line(document, arguments), batch_lines(document["result"])]}
 
   def render("events", %{format: "json"}, document),
     do: {:json, Map.update!(document, "result", &lean_batch/1)}
@@ -80,7 +83,8 @@ defmodule Insider.Lab.Live.Format do
            ],
       do: {:text, if(String.ends_with?(text, "\n"), do: text, else: text <> "\n")}
 
-  def render("watch", %{format: "compact"}, line), do: {:text, watch_lines(line)}
+  def render("watch", %{format: "compact"} = arguments, line),
+    do: {:text, watch_lines(line, arguments)}
 
   def render("watch", %{format: "json"}, %{"kind" => "batch"} = line),
     do: {:json, Map.update!(line, "result", &lean_batch/1)}
@@ -128,20 +132,25 @@ defmodule Insider.Lab.Live.Format do
 
   ## Compact
 
-  defp welcome_line(%{"welcome" => %{"schema" => _schema, "quick_start" => _quick_start}}),
-    do:
-      "# welcome: this target's quick start has not been read; run: mix insider.live welcome \"${N[@]}\"\n"
+  defp welcome_line(
+         %{"welcome" => %{"schema" => _schema, "quick_start" => _quick_start}},
+         arguments
+       ) do
+    invocation = Map.get(arguments, :invocation, Invocation.default())
 
-  defp welcome_line(_document), do: []
+    "# welcome: this target's quick start has not been read; run: #{invocation} welcome \"${N[@]}\"\n"
+  end
+
+  defp welcome_line(_document, _arguments), do: []
 
   # A watch that goes on through its reader's stored view, or that kept or
   # cleared it, says so once, before it subscribes, rather than on every
   # pushed batch.
-  defp watch_lines(%{"kind" => "subscribed"} = line) do
+  defp watch_lines(%{"kind" => "subscribed"} = line, arguments) do
     subscription = line["subscription"] || %{}
 
     [
-      welcome_line(line),
+      welcome_line(line, arguments),
       note_lines([get_in(subscription, ["stored_view", "note"]), subscription["view_note"]]),
       hash_line([
         "subscribed",
@@ -157,9 +166,10 @@ defmodule Insider.Lab.Live.Format do
   # A pushed batch is cut by the fixed push bounds and the stream goes on,
   # so it prints no next step (`--cursor` and `--limit`
   # are events flags).
-  defp watch_lines(%{"kind" => "batch", "result" => batch}), do: batch_lines(batch, :watch)
+  defp watch_lines(%{"kind" => "batch", "result" => batch}, _arguments),
+    do: batch_lines(batch, :watch)
 
-  defp watch_lines(%{"kind" => kind} = line) do
+  defp watch_lines(%{"kind" => kind} = line, _arguments) do
     fields =
       line
       |> Map.drop(["kind"])

@@ -309,7 +309,6 @@ defmodule Insider.Lab.Live.CLI do
   def run(arguments, writer, options \\ [])
       when is_list(arguments) and is_function(writer, 1) and is_list(options) do
     environment = environment(options)
-    writer = Invocation.writer(writer, environment.invocation)
 
     case parse(arguments, environment.invocation) do
       {:ok, command} ->
@@ -320,7 +319,7 @@ defmodule Insider.Lab.Live.CLI do
 
       {:error, code, details} ->
         Reports.remember_local(environment.reports_directory, attempted(arguments), code)
-        emit_failure(writer, code, details)
+        emit_failure(writer, code, details, nil, environment.invocation)
     end
   rescue
     _error -> emit_failure(writer, "observer_failed", %{})
@@ -1771,7 +1770,7 @@ defmodule Insider.Lab.Live.CLI do
   defp finish({:done, document}, command, writer) do
     remember(command, nil, document["result"])
 
-    case Format.render(command.operation, command.arguments, document) do
+    case formatted(command, document) do
       {:json, document} -> emit_document(writer, document, 0, command)
       {:text, text} -> emit_text(writer, text)
     end
@@ -1797,6 +1796,7 @@ defmodule Insider.Lab.Live.CLI do
         command
       )
 
+    document = Invocation.document(document, command.environment.invocation)
     emit_document(writer, document, @exit_statuses["error"], command)
   end
 
@@ -1806,7 +1806,7 @@ defmodule Insider.Lab.Live.CLI do
   # A watch line in the command's `--format`. Only JSON carries the welcome,
   # so only JSON output records its delivery.
   defp render(writer, command, document) do
-    case Format.render(command.operation, command.arguments, document) do
+    case formatted(command, document) do
       {:json, document} ->
         with :ok <- emit(writer, document) do
           mark_welcomed(document, command)
@@ -1816,6 +1816,14 @@ defmodule Insider.Lab.Live.CLI do
       {:text, text} ->
         write(writer, text)
     end
+  end
+
+  # The document with the target's commands in the form the observer was run
+  # with (`Invocation.document/2`), in the command's `--format`.
+  defp formatted(command, document) do
+    invocation = command.environment.invocation
+    arguments = Map.put(command.arguments, :invocation, invocation)
+    Format.render(command.operation, arguments, Invocation.document(document, invocation))
   end
 
   defp emit_text(writer, text) do
@@ -1937,14 +1945,19 @@ defmodule Insider.Lab.Live.CLI do
     end
   end
 
-  defp emit_failure(writer, code, details, command \\ nil) do
+  # An observer error's message is the welcome's text for its code, with its
+  # commands in the form the observer was run with: the command's, or
+  # `invocation` when no command was parsed.
+  defp emit_failure(writer, code, details, command \\ nil, invocation \\ nil) do
     if command, do: remember(command, code, nil)
     {status, _message} = Map.fetch!(@codes, code)
-    emit(writer, failure_document(code, details, command), Map.fetch!(@exit_statuses, status))
+    document = failure_document(code, details, command, invocation)
+    emit(writer, document, Map.fetch!(@exit_statuses, status))
   end
 
-  defp failure_document(code, details, command) do
+  defp failure_document(code, details, command, invocation \\ nil) do
     {status, message} = Map.fetch!(@codes, code)
+    invocation = invocation || get_in(command || %{}, [:environment, :invocation])
 
     put_command(
       %{
@@ -1953,7 +1966,7 @@ defmodule Insider.Lab.Live.CLI do
         "error" => %{
           "source" => "observer",
           "code" => code,
-          "message" => message,
+          "message" => Invocation.rewrite(message, invocation || Invocation.default()),
           "details" => details
         }
       },

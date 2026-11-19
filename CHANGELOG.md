@@ -51,8 +51,10 @@ every document is shorter.
 - The observer's help, its usage and option errors, and the commands the
   node prints (hints, `next` fields, `Next:` lines, the welcome's examples)
   now name the form you ran: `insider-lab live` for the escript,
-  `mix insider.live` for the Mix task. Sentences about the Mix task itself
-  are left as written.
+  `mix insider.live` for the Mix task. Only the fields that carry commands
+  are rewritten: event payloads, mark labels, reader names, session ids and
+  object keys are printed as the node wrote them, so they can be passed
+  back. Sentences about the Mix task itself are left as written.
 
 ### Changed
 

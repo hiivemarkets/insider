@@ -546,6 +546,32 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
              ~s(mix insider.live digest "${N[@]}" --session #{id} --since-mark --human)
   end
 
+  test "the escript leaves a mark label, captured events and keys as the node wrote them",
+       context do
+    escript = [invocation: "insider-lab live"]
+    captured = "mix insider.live start"
+
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    session = target(context) ++ ["--session", id]
+
+    {0, marked} = run(["mark" | session] ++ ["--label", captured], context, escript)
+    assert marked["result"]["mark"]["label"] == captured
+    assert "insider-lab live digest " <> _ = marked["result"]["next"]
+
+    :ok = :peer.call(context.peer, :logger, :error, [captured, %{captured => "metadata value"}])
+
+    # The label the mark returned finds it again.
+    {0, digest} = run(["digest" | session] ++ ["--since-mark", captured], context, escript)
+    assert digest["status"] == "ok"
+    assert digest["result"]["window"]["mark"]["label"] == captured
+
+    {0, read} = run(["events" | session] ++ ["--cursor", "0"], context, escript)
+    [event] = Enum.filter(read["result"]["events"], &(&1["event"]["severity"] == "error"))
+    assert event["event"]["payload"]["message"] == captured
+  end
+
   test "reports with a target copies the node's queue, and its config can opt in", context do
     :ok =
       :peer.call(context.peer, Application, :put_env, [:insider, :live_report_submission, :github])

@@ -20,13 +20,21 @@ reachable only as `insider-lab live --help`.
 - `Insider.Lab.Live.CLI.run/3` takes `invocation:`, the command that was
   run. The Mix task passes nothing, so it is `mix insider.live`; the
   escript's `live` passes `insider-lab live`. `parse/2` takes the same value.
-- Help (`--help`, `help OPERATION`, `OPERATION --help`), the `help` field of
-  `usage` and `invalid_options` errors, and every byte the observer writes
-  name that form. At the observer's output boundary the writer rewrites
-  `mix insider.live` to the invocation wherever it is followed by an
-  operation name, `OPERATION`, `help` or `--help`. That covers JSON
-  documents (each string value; the replacement holds no character JSON
-  escapes), compact and human text, each `watch` line, and help.
+- Help (`--help`, `help OPERATION`, `OPERATION --help`), the `help` field
+  and message of the observer's own errors, and the fields of a target's
+  document that carry commands name that form. Before it renders a
+  document, the observer rewrites `mix insider.live` to the invocation
+  wherever it is followed by an operation name, `OPERATION`, `help` or
+  `--help`, in these fields only: the welcome (delivered, pointed to, or the
+  `welcome` result), a result's `next`, `help` and `resume` commands, the
+  `command` of each hint and anomaly, the `Next:` and `next:` lines of a
+  human `text`, and an error's `help`. The compact welcome line names the
+  form too.
+- Everything else in a document is left exactly as the target wrote it:
+  captured events and their payloads, mark labels, reader names, session
+  ids, and every object key. A value the observer prints can be passed
+  back to it, so a mark labelled `mix insider.live start` is found again by
+  that label.
 - `mix insider.live` followed by anything else is a sentence about the Mix
   task ("run mix insider.live from tools/insider_lab", "in place of mix
   insider.live,") and stays as written.
@@ -45,13 +53,16 @@ reachable only as `insider-lab live --help`.
 The commands an observer prints are instructions to the agent that ran it,
 so they belong in that agent's form. Writing them in the right form in the
 core would need the core to know its caller, and an Elixir caller or
-Tidewave has none. Rewriting at the one place where the observer writes
-keeps the core's output the same for every caller and needs no new field in
-the target's documents.
+Tidewave has none. Rewriting in the observer keeps the core's output the
+same for every caller and needs no new field in the target's documents.
 
-Rewriting only before an operation word keeps prose about the Mix task
-true, and since the escript's form has the same length and no character
-that JSON escapes, an encoded document stays valid and within its bounds.
+Rewriting only the fields that carry commands keeps the rest of a
+document true to the node: a label, a name or a logged message that
+happens to look like a command is data, and printing it changed would
+make it impossible to pass back (an earlier draft rewrote the whole
+encoded output, and a mark labelled `mix insider.live start` could no
+longer be found). Rewriting only before an operation word keeps prose
+about the Mix task true.
 
 Help on no arguments is what a newcomer tries first. The protocol modes
 never took an empty argument list, so nothing relied on it being an error.
@@ -61,11 +72,11 @@ never took an empty argument list, so nothing relied on it being an error.
 - A test pins each form for help, usage and option errors, a target's
   `next` command and the welcome's quick start, and that the sentences
   about the Mix task are left alone.
-- Text from the target that is not a suggestion, such as a captured log
-  message that happens to contain `mix insider.live start`, is rewritten
-  in the escript's output as well. The observer cannot tell the two apart
-  without a structured field for commands; adding one is left to a later
-  change.
+- A test pins that captured data, object keys and mark labels are left as
+  the node wrote them in the escript's output, and that a mark is found
+  again by the label it was given.
+- A new field that carries a command must be added to the observer's list
+  of command fields, or it prints in the Mix task's form.
 - The escript prints `insider-lab live` even when it was started as
   `./insider-lab live` from a checkout build; both run the same program.
 - A third form would be one more `invocation:` value; the core does not

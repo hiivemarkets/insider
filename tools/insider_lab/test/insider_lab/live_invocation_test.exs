@@ -158,42 +158,116 @@ defmodule Insider.Lab.LiveInvocationTest do
                  "mix insider.live started, mix insider.live start-up, insider-lab live help."
     end
 
-    test "keeps encoded JSON valid and rewrites its string values" do
-      document = %{
-        "next" => "mix insider.live digest \"${N[@]}\" --session s",
-        "lines" => ["# hint: mix insider.live amend \"${N[@]}\" --session s", "plain"]
-      }
-
-      rewritten = document |> Jason.encode!() |> Invocation.rewrite(@escript) |> Jason.decode!()
-
-      assert rewritten["next"] == "insider-lab live digest \"${N[@]}\" --session s"
-
-      assert rewritten["lines"] == [
-               "# hint: insider-lab live amend \"${N[@]}\" --session s",
-               "plain"
-             ]
-    end
-
     test "the Mix task's form is the default and leaves text unchanged" do
       assert Invocation.default() == @mix
       text = "mix insider.live digest \"${N[@]}\" --session s"
       assert Invocation.rewrite(text, @mix) == text
     end
+  end
 
-    test "writer/2 rewrites what a command writes, and returns the writer's result" do
-      owner = self()
+  describe "document/2" do
+    @captured "mix insider.live start"
 
-      writer = fn bytes ->
-        send(owner, {:wrote, bytes})
-        :written
-      end
+    test "rewrites the fields that carry commands" do
+      document = %{
+        "operation" => "digest",
+        "welcome" => %{"read_with" => %{"observer" => "mix insider.live welcome \"${N[@]}\""}},
+        "result" => %{
+          "next" => "mix insider.live digest \"${N[@]}\" --session s",
+          "help" => "mix insider.live help digest",
+          "hints" => [%{"command" => "mix insider.live amend \"${N[@]}\" --session s"}],
+          "anomalies" => [%{"command" => "mix insider.live trace \"${N[@]}\" --trace-id t"}],
+          "anomalies_known" => [%{"command" => "mix insider.live events \"${N[@]}\""}],
+          "resume" => %{
+            "observer" => ["mix insider.live events \"${N[@]}\" --session s --cursor 4"],
+            "join" => "mix insider.live events \"${N[@]}\" --session s --cursor latest"
+          },
+          "welcome" => %{"read_with" => %{"observer" => "mix insider.live welcome \"${N[@]}\""}},
+          "text" =>
+            "Digest of s.\n  1. N+1 queries\n     next: mix insider.live trace \"${N[@]}\"\n" <>
+              "Next: raise the bound: mix insider.live amend \"${N[@]}\" --session s"
+        }
+      }
 
-      escript = Invocation.writer(writer, @escript)
+      rewritten = Invocation.document(document, @escript)
+      result = rewritten["result"]
 
-      assert escript.(["mix insider.live ", ["stop", ?\s], "\"${N[@]}\"\n"]) == :written
-      assert_received {:wrote, "insider-lab live stop \"${N[@]}\"\n"}
+      assert rewritten["welcome"]["read_with"]["observer"] ==
+               "insider-lab live welcome \"${N[@]}\""
 
-      assert Invocation.writer(writer, @mix) == writer
+      assert result["welcome"]["read_with"]["observer"] == "insider-lab live welcome \"${N[@]}\""
+      assert result["next"] == "insider-lab live digest \"${N[@]}\" --session s"
+      assert result["help"] == "insider-lab live help digest"
+      assert [%{"command" => "insider-lab live amend " <> _}] = result["hints"]
+      assert [%{"command" => "insider-lab live trace " <> _}] = result["anomalies"]
+      assert [%{"command" => "insider-lab live events " <> _}] = result["anomalies_known"]
+      assert ["insider-lab live events " <> _] = result["resume"]["observer"]
+      assert "insider-lab live events " <> _ = result["resume"]["join"]
+
+      assert result["text"] ==
+               "Digest of s.\n  1. N+1 queries\n     next: insider-lab live trace \"${N[@]}\"\n" <>
+                 "Next: raise the bound: insider-lab live amend \"${N[@]}\" --session s"
+    end
+
+    test "rewrites an error's help, and a welcome result in full" do
+      error = %{
+        "error" => %{
+          "help" => "mix insider.live help mark",
+          "details" => %{"help" => "mix insider.live help mark", "labels" => [@captured]}
+        }
+      }
+
+      rewritten = Invocation.document(error, @escript)
+      assert rewritten["error"]["help"] == "insider-lab live help mark"
+      assert rewritten["error"]["details"]["help"] == "insider-lab live help mark"
+      assert rewritten["error"]["details"]["labels"] == [@captured]
+
+      welcome = %{
+        "operation" => "welcome",
+        "result" => %{"quick_start" => %{"commands" => ["mix insider.live start \"${N[@]}\""]}}
+      }
+
+      assert Invocation.document(welcome, @escript)["result"]["quick_start"]["commands"] ==
+               ["insider-lab live start \"${N[@]}\""]
+    end
+
+    test "never touches captured data, object keys or identifiers" do
+      captured_map = %{@captured => 1, "insider-lab live start" => 2, "next" => @captured}
+
+      document = %{
+        "operation" => "events",
+        "result" => %{
+          "reader" => @captured,
+          "session_id" => @captured,
+          "mark" => %{"label" => @captured},
+          "marks" => [%{"label" => @captured}],
+          "events" => [
+            %{
+              "receipt" => 1,
+              "event" => %{
+                "payload" => %{"message" => @captured, "metadata" => captured_map},
+                "attributes" => %{"command" => @captured, "help" => @captured}
+              }
+            }
+          ],
+          "text" => "Top errors: 1x logger_message #{@captured}\nNext: read on: #{@captured}"
+        }
+      }
+
+      rewritten = Invocation.document(document, @escript)
+      result = rewritten["result"]
+
+      assert Map.delete(result, "text") == Map.delete(document["result"], "text")
+
+      assert result["text"] ==
+               "Top errors: 1x logger_message #{@captured}\nNext: read on: insider-lab live start"
+
+      assert rewritten |> Jason.encode!() |> Jason.decode!() == rewritten
+    end
+
+    test "the Mix task's form leaves a document as it is" do
+      document = %{"result" => %{"next" => "mix insider.live digest \"${N[@]}\""}}
+      assert Invocation.document(document, @mix) == document
     end
   end
 end
