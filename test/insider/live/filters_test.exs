@@ -833,7 +833,14 @@ defmodule Insider.Live.FiltersTest do
         )
 
       assert accounted == List.last(batches)["next_cursor"] - first["cursor"]
-      assert List.last(batches)["filtered"]["view"]["sources"] >= 3
+
+      # The hidden events are counted once, in the first batch sent after
+      # their tick. That is usually the telemetry batch, but the owner also
+      # sends a batch of filtered counts alone once @filtered_report_ms
+      # (5 s) passed since the last one, or a batch with a gap, so a stalled
+      # run can count them in a batch between the two ticks.
+      hidden = Enum.sum(for batch <- tl(batches), do: batch["filtered"]["view"]["sources"] || 0)
+      assert hidden >= 3
     end
 
     # Limit and max_bytes once counted the
