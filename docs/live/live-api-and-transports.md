@@ -129,7 +129,7 @@ What each result holds:
 - **`"disclosure"`**: a caller may ask for a stricter profile than the host's, never a richer one (`disclosure_denied`).
 - **Logger content** depends on the profile. The rich profile collects the formatted message text, level, and rendered metadata, bounded and with credentials masked. The strict profile never collects message text. A strict Logger event keeps only level, domain, label, message type, and, for OTP supervisor reports, the bounded supervisor projection. Causality metadata passes only in the opaque shapes described under [Cursors and gaps](live-sessions-and-readers.md#cursors-and-gaps).
 - **`"max_events"`**: the Recorder also has a fixed 4 MiB byte bound.
-- **`"retain_traces"`**: keeps the events of the N most recently active traces apart from the Recorder, so that they survive its eviction. `trace` reports them as retention.
+- **`"retain_traces"`**: keeps the events of the N most recently active traces apart from the Recorder, so that they survive its eviction. `trace` reports them as retention. Traces that failed, were slow, or ran a mutation are kept without it (see [Failed, slow, and mutation traces are kept by default](live-otel-traces.md#failed-slow-and-mutation-traces-are-kept-by-default)).
 - **Filters**: `"logger_level"`, `"logger_include"`, `"logger_exclude"`, `"logger_summaries"`, `"logger_summary_interval_ms"`, `"exclude_origins"`, `"otel_min_duration_ms"`, `"telemetry_min_duration_ms"`, `"telemetry_event_min_duration_ms"`, `"telemetry_summaries"`, `"telemetry_summary_interval_ms"`, and `"telemetry_duration_scopes"`. See [Filters, summaries, and views](live-digest-filters-and-trends.md#filters-summaries-and-views). The session's `start/1` and `status/1` records carry the effective values under `"filters"`.
 - **Poller**: `"poller_interval_ms"` (1,000 to 60,000, default 5,000), `"top_processes"` (0 to 5, default 5), `"top_ets_tables"` (0 to 10, default 5), `"top_ports"` (0 to 10, default 5), and `"watch_processes"` (up to 16 registered names). Each needs the `"poller"` component. The session's records carry the accepted values under `"poller"` (`nil` without the poller). See [Process and ETS evidence](live-runtime-evidence.md#process-and-ets-evidence).
 - **Call traces**: `"calls"` (1 to 16 functions as `"MOD.FUN/ARITY"`, required with the component), `"calls_results"` (`"exceptions"` default, `"all"`, `"none"`), `"calls_max"` (1 to 10,000, default 100), `"calls_rate_max"` (1 to 10,000, default 50), `"calls_rate_ms"` (1 to 60,000, default 1,000), and `"calls_max_bytes"` (256 to 2,048, default 1,024). See [Call traces](live-runtime-evidence.md#call-traces).
@@ -266,7 +266,7 @@ For a node that you did not start, see [Load Insider into the target](#load-insi
 
 ### Observe from the command line
 
-Run every command from `tools/insider_lab` in a checkout. With the escript from Hex (`mix escript.install hex insider_lab`), run `insider-lab live` in place of `mix insider.live`, from any directory. `mix insider.live --help` (or `help`) prints the operations, the quick start, and the target flags as text and exits `0`. `mix insider.live help OPERATION`, or `OPERATION --help`, prints that operation's flags with their value syntax and examples. Neither needs a target.
+Run every command from `tools/insider_lab` in a checkout. With the escript from Hex (`mix escript.install hex insider_lab`), run `insider-lab live` in place of `mix insider.live`, from any directory. `insider-lab --help`, or `insider-lab` alone, prints what the escript does and its commands, and exits `0`. `mix insider.live --help` (or `help`) prints the operations, the quick start, and the target flags as text and exits `0`. `mix insider.live help OPERATION`, or `OPERATION --help`, prints that operation's flags with their value syntax and examples. Neither needs a target. Help, usage errors, and the commands that the target prints (hints, `next` fields, `Next:` lines, the welcome's examples) name the form you ran: `insider-lab live` for the escript, `mix insider.live` for the Mix task. A sentence about the Mix task itself, such as "run `mix insider.live` from `tools/insider_lab`", stays as written, and so does everything the node recorded or you named: event payloads, mark labels, reader names, and session ids print as the node wrote them, so you can pass them back.
 
 ```sh
 N=(--node "my_app@$(hostname -s)" --cookie-file "$HOME/.my_app.cookie")
@@ -329,7 +329,7 @@ The observer refuses `--load` and `--force-load` with `load_refused` unless the 
 
 Insider does not support two observers that install into one target at first contact at the same time. It also does not support an Insider start during a first-contact install. The result of such a race is undefined. See `decisions/2026-10-23_observer_load_only_installs_and_only_force_replaces.md`.
 
-The `installation` object in every document (in a `watch`, its `subscribed` line) reports the Insider version and `insider_commit`, the commit this observer's Insider was built from. It reports `observer_build` and `target_build`, the two build identities. `target_build` is `null` for an Insider from before builds were identified. It reports `same_build`, with a `remedy` when it is false. It also reports the action taken (`none`, `started`, or `loaded`) and the pushed applications.
+The `installation` object reports the Insider version and `insider_commit`, the commit this observer's Insider was built from. On `capabilities`, after a load (`--load` or `--force-load` took an action), and whenever the target runs another build, it is the whole report. It then also reports `observer_build` and `target_build`, the two build identities. `target_build` is `null` for an Insider from before builds were identified. It reports `same_build`, with a `remedy` when it is false. It also reports the action taken (`none`, `started`, or `loaded`), the pushed applications, and the environment. Every other document (in a `watch`, its `subscribed` line) carries only `same_build`, `insider_version`, and `insider_commit`. Errors carry no `installation`.
 
 ### Default session
 
@@ -423,9 +423,9 @@ mix insider.live amend "${N[@]}" --session SESSION_ID --reset watch-process --re
 
 ### Read flags
 
-Nine operations read a session through a reader's view: `events`, `watch`, `digest`, `baseline`, `trends`, `trace`, `timeline`, `changes`, and `mutations`. Each takes `--reader NAME` and the nine view flags. These view flags are repeatable: `--view-source`, `--view-kind`, `--view-exclude-kind`, `--view-exclude-signature`, `--view-service`, `--view-route`, and `--view-trace`. `--view-min-severity` may appear once, and `--view-clear` is a boolean.
+Nine operations read a session through a reader's view: `events`, `watch`, `digest`, `baseline`, `trends`, `trace`, `timeline`, `changes`, and `mutations`. Each takes `--reader NAME` and the ten view flags. These view flags are repeatable: `--view-source`, `--view-kind`, `--view-exclude-kind`, `--view-exclude-signature`, `--view-service`, `--view-route`, and `--view-trace`. `--view-min-severity` may appear once, and `--view-clear` and `--view-keep` are booleans.
 
-A view narrows only your own read. See [Filters, summaries, and views](live-digest-filters-and-trends.md#filters-summaries-and-views).
+A view narrows only the read that gives it. `--view-keep` (with `--reader` and a view flag) keeps it as your stored view for your later reads, which then start with a note that names it; `--view-clear` clears it. See [Filters, summaries, and views](live-digest-filters-and-trends.md#filters-summaries-and-views) and [Stored views](live-sessions-and-readers.md#stored-views).
 
 Cursors and windows:
 
@@ -506,7 +506,7 @@ A compact batch also says what its `#` line implies:
 
 `watch` subscribes the observer process. It prints a `subscribed` line, then one `batch` line per pushed batch.
 
-- Only the `subscribed` line carries the document envelope: `schema`, `status`, `operation`, `target`, `installation`, and on a first contact `welcome`. Its `result` is the session's status. Its `subscription` is the target's `insider.live-subscription/v1` reply, whose `cursor` is where the stream starts.
+- Only the `subscribed` line carries the document envelope: `schema`, `status`, `operation`, `target`, `installation` (the summary, unless the whole report applies), and, until the quick start was delivered, `welcome`. Its `result` is the session's status. Its `subscription` is the target's `insider.live-subscription/v1` reply, whose `cursor` is where the stream starts.
 - Every later line carries only `kind` and its own fields. A `batch` line carries its `result`. Each batch's `cursor` is the previous batch's `next_cursor`.
 - The final `stopped` line carries its `reason`, `events` (how many it printed), and `next_cursor`. A later `watch --from-cursor` or `events --cursor` resumes there without a gap.
 

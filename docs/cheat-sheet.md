@@ -7,8 +7,10 @@ The most-used observer commands, grouped by task. They run the CLI from the
 and run the commands from any directory. Your app needs no dependency, and
 the core package, `insider`, has no Mix tasks. In an Insider checkout, write
 `mix insider.live` in place of `insider-lab live`, from `tools/insider_lab`.
-Replace `SESSION_ID`, `TRACE_ID`, and the pid with the values that earlier
-commands print.
+`insider-lab --help` describes the escript, and `insider-lab live --help`
+lists every operation. Help and the commands the observer prints in hints
+name the form you ran. Replace `SESSION_ID`, `TRACE_ID`, and the pid with
+the values that earlier commands print.
 
 ## Contents
 
@@ -66,8 +68,9 @@ insider-lab live amend "${N[@]}" --session SESSION_ID --telemetry-measurement du
 See [Pairing marks](live/live-sessions-and-readers.md#pairing-marks),
 [Pairing chart](live/live-sessions-and-readers.md#pairing-chart),
 [Digest](live/live-digest-filters-and-trends.md#digest),
-[Known-normal baseline](live/live-digest-filters-and-trends.md#known-normal-baseline), and
-[Cursors and gaps](live/live-sessions-and-readers.md#cursors-and-gaps).
+[Known-normal baseline](live/live-digest-filters-and-trends.md#known-normal-baseline),
+[Cursors and gaps](live/live-sessions-and-readers.md#cursors-and-gaps), and
+[Stored views](live/live-sessions-and-readers.md#stored-views).
 
 ```sh
 # Serve a live chart for the programmer; give them the URL it prints
@@ -80,6 +83,10 @@ insider-lab live digest "${N[@]}" --session SESSION_ID --since-mark 'about to cl
 insider-lab live events "${N[@]}" --session SESSION_ID --since-mark --format compact
 # The events from the start. Continue from the next_cursor it prints
 insider-lab live events "${N[@]}" --session SESSION_ID --cursor 0 --limit 100
+# Only warnings and worse, for this read only
+insider-lab live events "${N[@]}" --session SESSION_ID --cursor 0 --reader agent-a --view-min-severity warning
+# Keep a view for your later reads, which then say so first; --view-clear drops it
+insider-lab live digest "${N[@]}" --session SESSION_ID --reader agent-a --view-exclude-signature MyApp.Worker --view-keep --human
 # Mark the anomalies of the last 5 minutes as normal, so digests lead with new ones
 insider-lab live baseline "${N[@]}" --session SESSION_ID --human
 # A chart of what happened since the mark, as one HTML file

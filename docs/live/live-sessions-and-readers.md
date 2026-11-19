@@ -221,7 +221,7 @@ mix insider.live watch "${N[@]}" --session SESSION_ID --from-cursor latest --for
 
 The observer's `watch` prints pushed batches as NDJSON. It stops on SIGTERM, `--for`, `--max-events`, or the end of the session.
 
-`subscribe(id, pid, options)` pushes `{:insider_live_events, session_id, batch}`. The batch has the `events_since/3` batch shape and passes through the subscriber's optional `"view"`. `subscribe/3` also takes `"reader"`, which marks that reader `subscribed` in `status/1`.
+`subscribe(id, pid, options)` pushes `{:insider_live_events, session_id, batch}`. The batch has the `events_since/3` batch shape and passes through the subscriber's optional `"view"`, else its reader's stored view (see [Stored views](#stored-views)). `subscribe/3` also takes `"reader"`, which marks that reader `subscribed` in `status/1`, and `"view_keep"`, which keeps the subscription's view as the reader's stored view.
 
 The subscription starts at `"cursor"`:
 
@@ -260,17 +260,20 @@ A name is 1 to 32 letters, digits, `_`, `.`, or `-`. It starts with a letter or 
 - `"last_seen_ms_ago"` and `"last_seen_at"`.
 - `"subscribed"`.
 - `"active"`: subscribed, or seen within `reader_active_ms` (30,000).
-- `"view"`: its own view.
+- `"view"`: its stored view, or `nil`.
 
 Insider keeps at most 16 readers, the most recently seen. It does not list unnamed reads.
 
 ### Per-reader views
 
-Each reader reads through its own view. The view never changes what the session records or what another reader sees.
+A view narrows only the read or subscription that gives it. It never changes what the session records or what another reader sees.
 
-- A read that names a reader and gives a `"view"` makes it that reader's own view.
-- A later read by the same reader without a view uses it. This includes `digest/2`, `trends/2`, `trace/3`, and `timeline/2`.
-- `"view" => %{}` (observer `--view-clear`) clears it.
+- A read that gives a `"view"` reads through it. The view applies to that read only, even with a reader name.
+- A read that names a reader and gives a non-empty `"view"` with `"view_keep" => true` (observer `--view-keep`) also stores it as that reader's stored view.
+- A later read by the same reader without a view applies the stored view. This includes `events_since/3`, `subscribe/3`, `digest/2`, `trends/2`, `trace/3`, `timeline/2`, `changes`, `mutations`, and `baseline`. A read that gives its own view reads through that view instead and leaves the stored view as it was.
+- `"view" => %{}` (observer `--view-clear`) clears the stored view. `--view-clear` with other view flags replaces the stored view with them, as `--view-keep` does.
+
+`"view_keep"` needs a reader and a non-empty view. Otherwise the read is refused with `invalid_options`, field `view_keep`.
 
 A named reader's batch, pushed batches included, carries `"reader"` and the `"view"` it was read through. A view lookup that fails also fails the read. It leaves the stored view as it was.
 
@@ -279,13 +282,16 @@ Digest, trends, trace, and timeline results carry the reader and view too. They 
 ### Stored views
 
 ```sh
+mix insider.live events "${N[@]}" --session SESSION_ID --cursor 0 --reader agent-a --view-exclude-signature MyApp.Worker --view-keep
 mix insider.live digest "${N[@]}" --session SESSION_ID --reader agent-a --view-clear
 ```
 
-A stored view applies silently to later reads. A `--view-kind` on one read can hide many events from the same reader's next digest. So Insider says when a view is stored or cleared:
+A stored view narrows later reads that do not name it, so Insider always says when it applies, and when a read stores or clears one:
 
-- A batch whose read set or cleared the reader's view carries `"view_note"`. The note reads `this view is now reader claude's view for its later reads … until --view-clear; it hid N events here`, or `reader claude's view is cleared`. Compact output prints it as a `# note:` line.
-- A `--human` digest read through a stored view that hid events says so on its second line: `Note: reader claude's stored view (set by an earlier read: kinds …) hid N events from this digest; add --view-clear to read everything.`
+- A result that a stored view narrowed carries `"stored_view"` at the top level: `"reader"`, the `"view"`, `"hidden"` (the events it hid from this read, or `nil` where the read does not count them), `"source"`, and `"note"`. For a read, `"source"` is `"reader"` and the note reads `reader claude's stored view (kinds …, kept with --view-keep) hid N events from this read; --view-clear clears it`. Events and pushed batches, digest, trends, trace, timeline, changes, mutations, baseline, and a subscription's reply all carry it.
+- A subscription that gives no view keeps the stored view it inherited when it subscribed; a later `--view-keep` or `--view-clear` does not reach it. Its reply and pushed batches say `"source": "subscription_snapshot"`, and their note says the view is the one stored when it subscribed and that another view needs a new subscription.
+- `--human` text starts with that note as `Note: …`, and compact output starts with it as `# note: …`. A compact `watch` prints it once, before its `# subscribed` line.
+- A read that stored or cleared the reader's view carries `"view_note"`: `this view is now reader claude's stored view for its later reads … until --view-clear; it hid N events here`, or `reader claude's stored view is cleared`. Its `--human` text and compact output start with it too. A subscription's reply carries it without the count, since it has read nothing yet, and a compact `watch` prints it before its `# subscribed` line. `baseline --show` and `--clear` read nothing, so they refuse `"view_keep"`.
 
 ### Signature, service, route and trace views
 

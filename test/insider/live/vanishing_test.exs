@@ -161,8 +161,15 @@ defmodule Insider.Live.VanishingTest do
     assert trace["mutations"] == []
     refute trace["text"] =~ "Kept mutation"
 
-    assert {:ok, _read} = Live.events_since(id, 0, %{"reader" => "r", "view" => logger_only})
-    assert {:ok, %{"mutations" => []}} = Live.trace(id, @on, %{"reader" => "r"})
+    assert {:ok, _read} =
+             Live.events_since(id, 0, %{
+               "reader" => "r",
+               "view" => logger_only,
+               "view_keep" => true
+             })
+
+    assert {:ok, %{"mutations" => [], "stored_view" => %{"reader" => "r"}}} =
+             Live.trace(id, @on, %{"reader" => "r"})
 
     # A view that keeps them keeps them.
     assert {:ok, %{"mutations" => [_kept]}} =

@@ -52,6 +52,7 @@ defmodule Insider.Live do
   alias Insider.Live.Trends
   alias Insider.Live.Timeline
   alias Insider.Live.TimelineScan
+  alias Insider.Live.View
   alias Insider.Live.Welcome
   alias Insider.Redaction.Credentials
 
@@ -370,7 +371,10 @@ defmodule Insider.Live do
   `"upto"` (the newest receipt the read may return, from the starting
   cursor, after `"latest"` resolves, to the newest receipt, else
   `invalid_options`; losses are counted only up to it), and `"view"`, a
-  read-time filter that narrows only this reader's events.
+  read-time filter that narrows only this read. With `"reader"` and
+  `"view_keep" => true` the view becomes the reader's stored view, which
+  that reader's later reads without a view apply: their results then
+  carry `"stored_view"`. An empty view clears it.
   `"truncated_by"` names the bound that ended a truncated read. A read is
   complete when it reaches its snapshot boundary: `"upto"` when given, else
   the newest receipt when it began. Every batch reports `"filtered"` counts.
@@ -484,13 +488,14 @@ defmodule Insider.Live do
     end
   end
 
-  # The read options naming the reader and its view: the view given, or a
-  # named reader's own view (asked of the owner once, so every read of one
-  # operation uses the same view). Returns them and the effective view.
-  defp reading(session_id, %{reader: reader, view: view}) do
+  # The read options naming the reader and its view: the view given (kept
+  # with `"view_keep"` when asked), or a named reader's stored view (asked
+  # of the owner once, so every read of one operation uses the same view).
+  # Returns them and the effective view.
+  defp reading(session_id, %{reader: reader, view: view} = parsed) do
     # A lookup that fails fails the read: reading on without the reader's
-    # view would show it what its view hides, and would clear the view it
-    # keeps. A view given (`nil` when cleared) is sent as given.
+    # view would show it what its view hides. A view given (`nil` when
+    # cleared) is sent as given.
     stored =
       case {reader, view} do
         {nil, :keep} -> {:ok, :none}
@@ -510,6 +515,7 @@ defmodule Insider.Live do
         %{}
         |> then(&if(reader, do: Map.put(&1, "reader", reader), else: &1))
         |> then(&if(send?, do: Map.put(&1, "view", view), else: &1))
+        |> then(&if(parsed.store, do: Map.put(&1, "view_keep", true), else: &1))
 
       {:ok, options, view}
     end
@@ -543,33 +549,31 @@ defmodule Insider.Live do
     "#{who} hid #{total} events#{detail}; recording unchanged, other readers unaffected."
   end
 
-  # A view the reader set on an earlier read hides events from this digest
-  # without this read naming it (it can hide the events that decide a
-  # question), so the text says so right after its first line.
-  defp put_stored_view(digest, reader, view, hidden) do
-    digest = put_reading(digest, reader, view, hidden)
-    total = (hidden || %{}) |> Map.values() |> Enum.sum()
+  # What a read did with its reader's stored view, at the top of the
+  # result and on the first line of its text: a stored view applied to a
+  # read that gave none (`"stored_view"`), or a view this read kept or
+  # cleared (`"view_note"`). `hidden` counts what the view hid, or is `nil`.
+  defp put_view_notes(result, %{reader: reader} = parsed, view, hidden) when is_binary(reader) do
+    cond do
+      parsed.view == :keep and view != nil ->
+        stored = View.stored(reader, view, hidden)
+        result |> Map.put("stored_view", stored) |> first_line("Note: " <> stored["note"])
 
-    if total == 0 do
-      digest
-    else
-      filters =
-        view
-        |> Enum.sort()
-        |> Enum.map_join("; ", fn {key, values} ->
-          "#{key} #{Enum.join(List.wrap(values), ", ")}"
-        end)
+      parsed.store or is_nil(parsed.view) ->
+        note = View.stored_change_note(reader, parsed.view, hidden)
+        result |> Map.put("view_note", note) |> first_line("Note: " <> note)
 
-      note =
-        "Note: reader #{reader}'s stored view (set by an earlier read: #{filters}) hid #{total} events " <>
-          "from this digest; add --view-clear to read everything."
-
-      Map.update!(digest, "text", fn text ->
-        [header | rest] = String.split(text, "\n", parts: 2)
-        Enum.join([header, note | rest], "\n")
-      end)
+      true ->
+        result
     end
   end
+
+  defp put_view_notes(result, _parsed, _view, _hidden), do: result
+
+  defp first_line(%{"text" => text} = result, line) when is_binary(text),
+    do: %{result | "text" => line <> "\n" <> text}
+
+  defp first_line(result, _line), do: result
 
   # A window since a pairing mark starts at the mark the owner finds now,
   # before the digest's own budget starts.
@@ -617,9 +621,10 @@ defmodule Insider.Live do
           digest = if human, do: Map.put(digest, "text", Digest.text(digest)), else: digest
           hidden = get_in(digest, ["filtered", "view"])
 
-          if human and parsed.view == :keep and view != nil,
-            do: {:ok, put_stored_view(digest, parsed.reader, view, hidden)},
-            else: {:ok, put_reading(digest, parsed.reader, view, hidden, human)}
+          {:ok,
+           digest
+           |> put_reading(parsed.reader, view, hidden, human)
+           |> put_view_notes(parsed, view, hidden)}
 
         other ->
           other
@@ -777,7 +782,8 @@ defmodule Insider.Live do
           "dropped #{accounting["dropped"]}, missed_receipts #{accounting["missed_receipts"]})"
 
       text = Enum.join([header | Enum.map(records, &Mutations.line/1)], "\n")
-      {:ok, if(parsed.human, do: Map.put(result, "text", text), else: result)}
+      result = if(parsed.human, do: Map.put(result, "text", text), else: result)
+      {:ok, put_view_notes(result, parsed, view, nil)}
     end
     |> tracked("mutations")
   end
@@ -835,7 +841,8 @@ defmodule Insider.Live do
               Enum.map_join(report["gaps"], ", ", &"#{&1["count"] || "?"} #{&1["reason"]}") <>
               "; earlier writes may be missing"
 
-      {:ok, if(parsed.human, do: Map.put(result, "text", text <> incomplete), else: result)}
+      result = if(parsed.human, do: Map.put(result, "text", text <> incomplete), else: result)
+      {:ok, put_view_notes(result, parsed, view, Map.get(scan, :view_hidden) || %{})}
     end
     |> tracked("changes")
   end
@@ -877,6 +884,7 @@ defmodule Insider.Live do
           ),
         else: result
     end)
+    |> put_view_notes(parsed, view, Map.get(scan, :view_hidden) || %{})
   end
 
   @doc """
@@ -928,7 +936,8 @@ defmodule Insider.Live do
         {:ok,
          document
          |> put_reading(parsed.reader, view, hidden, human)
-         |> Map.put("filtered_view", hidden || %{})}
+         |> Map.put("filtered_view", hidden || %{})
+         |> put_view_notes(parsed, view, hidden || %{})}
       end
 
     tracked(result, "trends")
@@ -1036,6 +1045,7 @@ defmodule Insider.Live do
       %{"since" => since_option(parsed.since)}
       |> then(&if(parsed.reader, do: Map.put(&1, "reader", parsed.reader), else: &1))
       |> then(&if(parsed.view != :keep, do: Map.put(&1, "view", parsed.view), else: &1))
+      |> then(&if(parsed.store, do: Map.put(&1, "view_keep", true), else: &1))
 
     # Every candidate of the window is marked, with the earlier entries the
     # window does not have, so baselining again marks what is shown now.
@@ -1045,14 +1055,14 @@ defmodule Insider.Live do
       since = get_in(digest, ["window", "since"])
 
       if anomalies == [] do
-        {:ok, previous, {:unchanged, since}}
+        {:ok, previous, {:unchanged, since}, digest}
       else
         set_at = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
         baseline = Anomalies.baseline(digest, set_at, since, previous)
 
         with {:ok, previous} <-
                call({:known_normal, session_id, {:put, baseline}}, @control_timeout_ms),
-             do: {:ok, baseline, {:set, previous, anomalies}}
+             do: {:ok, baseline, {:set, previous, anomalies}, digest}
       end
     end
   end
@@ -1062,6 +1072,16 @@ defmodule Insider.Live do
   defp since_option({:recent, ms}), do: "latest-#{ms}ms"
   defp since_option({:mark, nil}), do: "mark"
   defp since_option({:mark, label}), do: "mark:" <> label
+
+  # A baseline set through the reader's stored view, or that kept or
+  # cleared a view, says so as its digest did.
+  defp baseline_text({:ok, baseline, outcome, digest}, session_id, parsed) do
+    {:ok, result} = baseline_text({:ok, baseline, outcome}, session_id, parsed)
+    notes = Map.take(digest, ["stored_view", "view_note"])
+    note = get_in(notes, ["stored_view", "note"]) || notes["view_note"]
+    result = Map.merge(result, notes)
+    {:ok, if(note, do: first_line(result, "Note: " <> note), else: result)}
+  end
 
   defp baseline_text({:ok, baseline, outcome}, session_id, parsed) do
     result = %{
@@ -1224,8 +1244,9 @@ defmodule Insider.Live do
   carries the `"receipt"`. Options: `"cursor"` (default 0; an integer no
   newer than the newest receipt, or `"latest"`), `"max_events"` (the events
   pushed in total; then nothing more is sent but the terminal batch), and
-  `"view"`, as for `events_since/3`. Subscribing again replaces the view and
-  `"max_events"`, and moves the cursor only when one is given.
+  `"view"` and `"view_keep"`, as for `events_since/3`. Subscribing again
+  replaces the view and `"max_events"`, and moves the cursor only when one
+  is given.
   """
   @spec subscribe(String.t(), pid(), map()) :: result()
   def subscribe(session_id, pid, options \\ %{}),

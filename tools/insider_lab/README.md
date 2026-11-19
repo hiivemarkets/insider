@@ -41,12 +41,20 @@ publication, or deployment authority.
 
 ```sh
 mix escript.install hex insider_lab
+insider-lab --help
 insider-lab live --help
 ```
 
 Mix prints the directory it installs the escript in. Put it on your `PATH`,
 and install again to update. The escript carries the Insider of its version,
 and `--load` pushes it into a development node. Your app needs no change.
+
+`insider-lab --help` (or `insider-lab` alone) says what the escript does and
+names its commands. `insider-lab live --help` lists every observer
+operation, and `insider-lab live help OPERATION` one operation's flags. Help,
+errors, and the commands the observer prints in hints and `next` fields name
+the form you ran: `insider-lab live` for the escript, `mix insider.live` for
+the Mix task.
 
 ## Quick start
 

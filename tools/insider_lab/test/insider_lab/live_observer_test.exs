@@ -91,6 +91,10 @@ defmodule Insider.Lab.LiveObserverTest do
   defp target(node, cookie_file, extra \\ []),
     do: ["--node", node, "--cookie-file", cookie_file] ++ extra
 
+  # The installation fields every observer document carries; the whole
+  # report only on capabilities, a load, or another build.
+  defp short_installation, do: ["insider_commit", "insider_version", "same_build"]
+
   describe "against a peer running Insider" do
     setup %{cookie: cookie} do
       {peer, node} = start_peer(cookie, insider: :started, environment: :development)
@@ -104,7 +108,13 @@ defmodule Insider.Lab.LiveObserverTest do
       assert document["schema"] == "insider.live-observer/v1"
       assert document["status"] == "ok"
       assert document["target"] == context.node
-      assert document["installation"]["action"] == "none"
+      # capabilities carries the whole installation report.
+      assert %{"action" => "none", "same_build" => true, "pushed_applications" => []} =
+               document["installation"]
+
+      assert document["installation"]["observer_build"] ==
+               document["installation"]["target_build"]
+
       assert document["result"]["schema"] == "insider.live-capabilities/v1"
       assert document["result"]["environment"] == "development"
       assert document["result"]["insider_version"] == document["installation"]["insider_version"]
@@ -276,7 +286,13 @@ defmodule Insider.Lab.LiveObserverTest do
         ])
 
       assert_receive {^reference, %{"kind" => "subscribed"} = subscribed}, 10_000
-      assert %{"schema" => "insider.live-observer/v1", "installation" => %{}} = subscribed
+
+      assert %{"schema" => "insider.live-observer/v1", "installation" => installation} =
+               subscribed
+
+      # The envelope carries only the installation summary and, after delivery, no welcome.
+      assert Enum.sort(Map.keys(installation)) == short_installation()
+      refute Map.has_key?(subscribed, "welcome")
       assert %{"cursor" => ^latest, "max_events" => 2} = subscribed["subscription"]
 
       for index <- 1..3, do: :peer.call(context.peer, :logger, :error, ["live #{index}"])
@@ -307,6 +323,7 @@ defmodule Insider.Lab.LiveObserverTest do
 
       assert keys(subscribed) == keys(fixture_subscribed)
       assert keys(subscribed["subscription"]) == keys(fixture_subscribed["subscription"])
+      assert keys(subscribed["installation"]) == keys(fixture_subscribed["installation"])
       assert keys(stopped) == keys(fixture_stopped)
 
       for batch <- batches do
@@ -1833,14 +1850,17 @@ defmodule Insider.Lab.LiveObserverTest do
       assert :peer.call(peer, :code, :is_loaded, [:recon]) == false
 
       {0, loaded} = single(["alloc", "--load" | target])
+      # A load carries the whole installation report.
       assert loaded["installation"]["action"] == "loaded"
       assert loaded["installation"]["pushed_applications"] == ["recon"]
+      assert loaded["installation"]["observer_build"] == loaded["installation"]["target_build"]
       assert loaded["result"]["schema"] == "insider.live-alloc/v1"
       assert loaded["result"]["implementation"] == "recon"
 
       # recon is now resolvable there, so a second --load pushes nothing.
       {0, again} = single(["alloc", "--load", "--top", "1" | target])
-      assert again["installation"]["action"] == "none"
+      # Nothing loaded and the same build: only the summary.
+      assert again["installation"] == Map.take(loaded["installation"], short_installation())
       assert again["result"]["implementation"] == "recon"
 
       # ports never uses recon: its census stays within its own scan bound.
@@ -1937,6 +1957,10 @@ defmodule Insider.Lab.LiveObserverTest do
       assert installation["target_build"]["commit"] == @other_commit
       refute installation["target_build"]["beams_sha256"] == observer_build()["beams_sha256"]
       assert installation["remedy"] =~ "--force-load"
+
+      # Another build keeps the whole report, remedy included, on every command.
+      {0, discovered} = single(["discover" | target(node, context.cookie_file)])
+      assert discovered["installation"] == installation
     end
 
     test "--load refuses another build that is loaded but not started, and changes nothing",
@@ -2589,20 +2613,75 @@ defmodule Insider.Lab.LiveObserverTest do
             ~w(digest --since latest-60s --human),
             ~w(trends),
             ["trace", "--trace-id", String.duplicate("b", 32)],
-            ~w(timeline --pid <0.1.0>)
+            ~w(timeline --pid <0.1.0>),
+            ~w(changes),
+            ~w(mutations),
+            ~w(baseline)
           ] do
-        assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => ^expected}}}} =
+        # A view narrows only the read that gives it.
+        assert {:ok,
+                %{arguments: %{options: %{"reader" => "agent-a", "view" => ^expected} = options}}} =
                  CLI.parse(arguments ++ view ++ target),
+               inspect(arguments)
+
+        refute Map.has_key?(options, "view_keep")
+
+        # --view-keep makes it the reader's stored view.
+        assert {:ok, %{arguments: %{options: %{"view" => ^expected, "view_keep" => true}}}} =
+                 CLI.parse(arguments ++ view ++ ["--view-keep"] ++ target),
                inspect(arguments)
       end
 
-      assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => %{}}}}} =
+      assert {:ok, %{arguments: %{options: %{"reader" => "agent-a", "view" => %{}} = options}}} =
                CLI.parse(~w(digest --reader agent-a --view-clear) ++ target)
+
+      refute Map.has_key?(options, "view_keep")
+
+      # --view-clear with other view flags replaces the stored view with them.
+      assert {:ok,
+              %{
+                arguments: %{
+                  options: %{"view" => %{"kinds" => ["phoenix.*"]}, "view_keep" => true}
+                }
+              }} =
+               CLI.parse(~w(digest --reader agent-a --view-clear --view-kind phoenix.*) ++ target)
 
       assert {:ok, %{arguments: %{options: options}}} =
                CLI.parse(~w(digest --reader agent-a) ++ target)
 
       refute Map.has_key?(options, "view")
+    end
+
+    # A view that silently became the reader's stored view hid 1,071 events
+    # from a later trace; keeping one now takes --view-keep, which needs a
+    # reader to keep it for and a view to keep.
+    test "--view-keep needs --reader and a view flag", _context do
+      target = ~w(--node app@localhost --cookie-file /x --session s)
+
+      assert {:error, "invalid_options",
+              %{"option" => "--view-keep", "problem" => "missing", "missing" => ["--reader"]} =
+                details} =
+               CLI.parse(~w(events --cursor 0 --view-min-severity warning --view-keep) ++ target)
+
+      assert details["expected"] =~ "--reader"
+
+      assert {:error, "invalid_options",
+              %{"option" => "--view-keep", "problem" => "missing", "missing" => missing}} =
+               CLI.parse(
+                 ~w(trace --trace-id #{String.duplicate("b", 32)} --reader a --view-keep) ++
+                   target
+               )
+
+      assert "--view-min-severity" in missing and "--view-kind" in missing
+      refute "--view-clear" in missing
+
+      assert {:error, "invalid_options", %{"option" => "--view-keep", "problem" => "missing"}} =
+               CLI.parse(~w(digest --reader a --view-clear --view-keep) ++ target)
+
+      assert {:error, "invalid_options", %{"option" => "--view-keep", "accepted_by" => by}} =
+               CLI.parse(~w(mark --label x --view-keep) ++ target)
+
+      assert "events" in by and "watch" in by
     end
 
     test "--reader, --force, and amend's recording flags reach the target's options", _context do

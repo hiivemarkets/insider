@@ -19,7 +19,7 @@ traces and mutation records, and the loopback OTLP receiver that joins a fronten
 - [Repeated query shapes](#repeated-query-shapes)
 - [Oban jobs](#oban-jobs)
 - [Pin a trace](#pin-a-trace)
-  - [Mutation traces are kept by default](#mutation-traces-are-kept-by-default)
+  - [Failed, slow, and mutation traces are kept by default](#failed-slow-and-mutation-traces-are-kept-by-default)
 - [Response values](#response-values)
 - [Kept mutation records](#kept-mutation-records)
 - [Timeline of a process or request](#timeline-of-a-process-or-request)
@@ -288,38 +288,49 @@ passes them through the session's disclosure boundary and the reader's view. It 
 index, as a read's view is resolved. So a service or route view keeps a kept trace's correlated Logger and
 Telemetry events. `trace` adds the kept events that its scan did not read.
 
-The store holds at most 8 explicit pins, 4,096 events, and 4 MiB in all. Past a bound, the least recently active
-automatic trace goes first, then the oldest events of the oldest pin. A ninth pin lets the oldest pin go to the
-`retain_traces` pool.
+The store holds at most 8 explicit pins, 4,096 events, and 4 MiB in all. Past a bound, the traces kept by default go
+first (below), then the least recently active automatic trace, then the oldest events of the oldest pin. A ninth
+pin lets the oldest pin go to the `retain_traces` pool.
 
-A trace result's `retention` says `pinned` (`explicit`, `auto`, `mutation`, or `nil`) and `events` kept. `restored`
-counts kept events that the scan did not find, because the Recorder had evicted them. `lost` counts events dropped
-by the store's bound. `missed_receipts` counts receipts that the Recorder evicted before the owner could copy them
-while the trace was kept. Some may have been its events. Its text says the same in a `Retained:` line. The first
-time an agent reads a trace that is not kept after the Recorder evicted events in the scanned receipts,
+A trace result's `retention` says `pinned` (`explicit`, `auto`, `failed`, `slow`, `mutation`, or `nil`) and `events`
+kept. `restored` counts kept events that the scan did not find, because the Recorder had evicted them. `lost` counts
+events dropped by the store's bound. `missed_receipts` counts receipts that the Recorder evicted before the owner
+could copy them while the trace was kept. Some may have been its events. Its text says the same in a `Retained:`
+line. The first time an agent reads a trace that is not kept after the Recorder evicted events in the scanned receipts,
 `retention.hint` and a `Hint:` line say how to pin one. `status` reports `retention`: the bounds, `retain_traces`,
 the pinned trace ids, events, bytes, `evicted_traces`, `dropped_events`, and `missed_receipts`. A stopped session
 keeps its retention for its read-only window.
 
-### Mutation traces are kept by default
+### Failed, slow, and mutation traces are kept by default
 
-With the telemetry component, Insider keeps the trace of each request that ran a GraphQL mutation without
-`retain_traces` or `--retain`. Such a request has an `absinthe.execute.operation.stop` whose outcome's
-`operation_type` is `mutation`. So a `trace` call after a mutation finds its trace without any setup. The trace's
-events before the operation stop come from a lookback. The lookback holds the last 1,024 traced events (and 1 MiB)
-of traces not yet kept, and of automatic traces that `retain_traces` let go. Events that fell out of it count as
-the trace's `lost`. Insider keeps these loss counters for the 2,048 traces whose counters were updated last. Past
-that, the least recently updated counter goes, counted in `status`'s `retention.loss_counters_evicted`.
+Insider keeps some traces without `retain_traces` or `--retain`, so a `trace` call right after a request that
+failed, was slow, or ran a mutation finds it. Each reason has its own pool of at most 16 traces, the least recently
+active let go first (`evicted_traces`), so a burst of failing background calls cannot push out a mutation trace.
 
-Insider keeps at most 16 mutation traces, and lets the least recently active go first (`evicted_traces`). Default
-mutation retention never costs what `--retain` and `retain_traces` keep. An automatic trace that runs a mutation
-stays automatic until the pool lets it go. Only then does it become a mutation trace. Past the store's bounds,
-mutation traces go first, then automatic traces, then explicit pins' oldest events.
+- `failed`: a traced event with severity `error` or `critical`, such as an exception, a 5xx, a failed span, GraphQL
+  errors, or a Logger error. On with the logger, telemetry, or otel component.
+- `slow`: a traced Telemetry event whose `duration` or `total_time` measurement, or a span whose `duration_us`, is
+  at least 500 ms (fixed, `status`'s `retention.slow_trace_ms`). On with the same components.
+- `mutation`: an `absinthe.execute.operation.stop` whose outcome's `operation_type` is `mutation`. On with the
+  telemetry component.
 
-Such a trace's `retention.pinned` is `mutation`, and its text says `Retained: kept because it ran a GraphQL
-mutation`. `status`'s `retention` adds `keep_mutations` and `mutation_traces`. The decisions are
-`decisions/2026-10-25_live_keeps_mutation_traces_by_default_and_names_the_graphql_client.md` and
-`decisions/2026-10-25_live_default_mutation_retention_never_costs_explicit_retention.md`.
+A trace with several reasons takes the strongest: mutation, then failed, then slow. Its events before the one that
+made it notable come from a lookback: the last 4,096 traced events (and 4 MiB) of traces not yet kept, and of
+automatic traces that `retain_traces` let go, so a large request survives until its stop or error arrives. The
+store and the lookback together hold at most 8 MiB on the target. Events that fell out of the lookback count as the
+trace's `lost`. Insider keeps these loss counters for the 2,048 traces whose counters were updated last. Past that,
+the least recently updated counter goes, counted in `status`'s `retention.loss_counters_evicted`.
+
+Default retention never costs what `--retain` and `retain_traces` keep. With `retain_traces`, every new trace joins
+the automatic pool, a notable one too, and takes its reason only when the pool lets it go. Past the store's bounds,
+slow traces go first, then failed, then mutation traces. A kept trace's `retention.pinned` names its reason, and its text says
+`Retained: kept because it failed`, `kept because it was slow (≥ 500 ms)`, or `kept because it ran a GraphQL
+mutation`. `status`'s `retention` adds `keep_failed_and_slow`, `keep_mutations`, `failed_traces`, `slow_traces`,
+`mutation_traces`, each pool's `*_traces_max`, `slow_trace_ms`, `mutation_lookback_max` (the lookback's events, for
+every reason), and `lookback_bytes_max`. The decisions are
+`decisions/2026-10-25_live_keeps_mutation_traces_by_default_and_names_the_graphql_client.md`,
+`decisions/2026-10-25_live_default_mutation_retention_never_costs_explicit_retention.md`, and
+`decisions/2026-11-18_live_keeps_failed_and_slow_traces_by_default.md`.
 
 ## Response values
 

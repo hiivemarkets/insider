@@ -295,7 +295,7 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
     assert after_delivery["welcome"]["delivered"] == true
   end
 
-  test "the first command against a target carries the quick start, later ones a pointer",
+  test "the first command against a target carries the quick start, later ones none",
        context do
     {0, first} = run(["capabilities" | target(context)], context)
 
@@ -317,18 +317,88 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
 
     {1, second} = run(["status", "--session", "live-none" | target(context)], context)
     assert second["error"]["code"] == "unknown_session"
+    refute Map.has_key?(second, "welcome")
+
+    # Only capabilities, the discovery command, keeps a pointer with the
+    # delivered hash.
+    {0, third} = run(["capabilities" | target(context)], context)
 
     assert %{"delivered" => true, "hash" => hash, "read_with" => %{"observer" => _}} =
-             second["welcome"]
+             third["welcome"]
 
     assert hash == first["welcome"]["hash"]
     # The pointer advertises the schema its read command returns.
-    assert second["welcome"]["schema"] == first["welcome"]["schema"]
-    assert second["welcome"]["full_reference"]["schema"] == "insider.live-welcome/v2"
-    refute Map.has_key?(second["welcome"], "quick_start")
+    assert third["welcome"]["schema"] == first["welcome"]["schema"]
+    assert third["welcome"]["full_reference"]["schema"] == "insider.live-welcome/v2"
+    refute Map.has_key?(third["welcome"], "quick_start")
 
     {0, explicit} = run(["welcome" | target(context)], context)
     refute Map.has_key?(explicit, "welcome")
+  end
+
+  test "receipts neither carry nor deliver the quick start, and carry a short installation",
+       context do
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    try do
+      session = ["--session", id | target(context)]
+
+      # A receipt as the first command: no welcome, and nothing delivered.
+      for receipt <- [["mark", "--label", "first"], ["renew"], ["amend", "--component", "logger"]] do
+        {0, document} = run(receipt ++ session, context)
+        refute Map.has_key?(document, "welcome"), "#{hd(receipt)} carried a welcome"
+        assert_short_installation(document)
+      end
+
+      # The next command that needs it carries the quick start.
+      {0, read} = run(["events", "--cursor", "0" | session], context)
+
+      assert %{"schema" => "insider.live-welcome-quick-start/v1", "quick_start" => _} =
+               read["welcome"]
+
+      assert_short_installation(read)
+
+      # After delivery, neither receipts nor reads carry a welcome or a pointer.
+      for later <- [
+            ["mark", "--label", "after"],
+            ["amend", "--component", "logger"],
+            ["events", "--cursor", "latest"]
+          ] do
+        {0, document} = run(later ++ session, context)
+        refute Map.has_key?(document, "welcome"), "#{hd(later)} carried a welcome"
+        assert_short_installation(document)
+      end
+
+      # capabilities keeps its pointer and the full installation.
+      {0, capabilities} = run(["capabilities" | target(context)], context)
+      assert %{"delivered" => true, "hash" => hash} = capabilities["welcome"]
+      assert hash == read["welcome"]["hash"]
+
+      assert %{"action" => "none", "same_build" => true, "observer_build" => _} =
+               capabilities["installation"]
+
+      {0, stopped} = run(["stop" | session], context)
+      refute Map.has_key?(stopped, "welcome")
+      assert_short_installation(stopped)
+    after
+      :peer.call(context.peer, Insider.Live, :stop, [id, %{"force" => true}])
+    end
+  end
+
+  # Every observer document but capabilities, a load, or another build
+  # carries only this summary of the installation.
+  defp assert_short_installation(document) do
+    installation = document["installation"]
+
+    assert Enum.sort(Map.keys(installation)) == [
+             "insider_commit",
+             "insider_version",
+             "same_build"
+           ]
+
+    assert installation["same_build"] == true
+    assert installation["insider_commit"] == Insider.Live.Revision.commit()
   end
 
   test "after welcome, the next command carries only a pointer", context do
@@ -435,6 +505,71 @@ defmodule Insider.Lab.LiveWelcomeObserverTest do
 
     assert hash == welcome["hash"]
     assert node == context.node
+  end
+
+  # The target writes its commands as `mix insider.live …`; the escript prints
+  # them as `insider-lab live …`, and leaves the sentences about the Mix task.
+  test "the escript prints the target's commands in the form it was run with", context do
+    escript = [invocation: "insider-lab live"]
+
+    {0, document} = run(["welcome" | target(context)], context, escript)
+    quick_start = document["result"]["quick_start"]
+
+    assert String.starts_with?(quick_start["load"], "insider-lab live capabilities ")
+
+    for command <- quick_start["commands"] do
+      assert command =~ "insider-lab live ", command
+      refute command =~ "mix insider.live", command
+    end
+
+    [step | _steps] = quick_start["steps"]
+    assert step =~ "then run insider-lab live in place of mix insider.live, from any directory"
+    assert step =~ "In an Insider checkout: run mix insider.live from tools/insider_lab"
+
+    {0, capabilities} = run(["capabilities" | target(context)], context, escript)
+    pointer = capabilities["result"]["welcome"]
+    assert String.starts_with?(pointer["read_with"]["observer"], "insider-lab live welcome ")
+
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    mark = ["mark" | target(context)] ++ ["--session", id, "--label", "before"]
+
+    {0, marked} = run(mark, context, escript)
+
+    assert marked["result"]["next"] ==
+             ~s(insider-lab live digest "${N[@]}" --session #{id} --since-mark --human)
+
+    {0, marked} = run(mark, context)
+
+    assert marked["result"]["next"] ==
+             ~s(mix insider.live digest "${N[@]}" --session #{id} --since-mark --human)
+  end
+
+  test "the escript leaves a mark label, captured events and keys as the node wrote them",
+       context do
+    escript = [invocation: "insider-lab live"]
+    captured = "mix insider.live start"
+
+    {:ok, %{"session_id" => id}} =
+      :peer.call(context.peer, Insider.Live, :start, [%{"components" => ["logger"]}])
+
+    session = target(context) ++ ["--session", id]
+
+    {0, marked} = run(["mark" | session] ++ ["--label", captured], context, escript)
+    assert marked["result"]["mark"]["label"] == captured
+    assert "insider-lab live digest " <> _ = marked["result"]["next"]
+
+    :ok = :peer.call(context.peer, :logger, :error, [captured, %{captured => "metadata value"}])
+
+    # The label the mark returned finds it again.
+    {0, digest} = run(["digest" | session] ++ ["--since-mark", captured], context, escript)
+    assert digest["status"] == "ok"
+    assert digest["result"]["window"]["mark"]["label"] == captured
+
+    {0, read} = run(["events" | session] ++ ["--cursor", "0"], context, escript)
+    [event] = Enum.filter(read["result"]["events"], &(&1["event"]["severity"] == "error"))
+    assert event["event"]["payload"]["message"] == captured
   end
 
   test "reports with a target copies the node's queue, and its config can opt in", context do

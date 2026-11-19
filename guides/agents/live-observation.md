@@ -29,10 +29,16 @@ invocations, and a longer guide.
   Insider into a node without it. Until then, `welcome` returns
   `insider_missing`. Then run `welcome` with the same `--node` and
   `--cookie-file`, and add `--full` for the full reference. The first
-  command run against a target node,
-  whatever it is, also carries the quick start under `"welcome"`; later ones
-  carry a pointer. `mix insider.live --help` and `help OPERATION` print the
-  flags with their value syntax and examples, without a target.
+  command run against a target node also carries the quick start under
+  `"welcome"`, once, unless it is a short receipt (`mark`, `amend`, `stop`,
+  `renew`, `chart`, `reports`): then the next command does. Afterwards only
+  `capabilities` carries a pointer with the delivered hash. Every ok document
+  carries `installation.same_build`, `insider_version` and `insider_commit`;
+  the whole installation report comes with `capabilities`, a load, or
+  another build. `insider-lab live --help` (or `mix insider.live --help`)
+  and `help OPERATION` print the flags with their value syntax and
+  examples, without a target; `insider-lab --help` describes the escript.
+  Help and the commands in hints and `next` fields name the form you ran.
 - Parse stdout alone. It carries only the observer's documents; Mix prints
   its `Compiling` and `Waiting for lock on the build directory` notices
   (several `mix` commands in one checkout share that lock) on stderr. If
@@ -95,7 +101,10 @@ if `capabilities` later reports another hash, read the welcome again.
   (`"reader"`); `status` lists each named reader's cursor and when it last
   read. Join a running session from cursor `latest` instead of stopping it.
 - Recording options (components, events, measurements, filters) apply to
-  every reader. A view applies only to your own read. To change what is
+  every reader. A view applies only to the read that gives it; `--view-keep`
+  keeps it as your reader's stored view, and your later reads without view
+  flags then apply it and say so first (`stored_view`, a `Note:` or
+  `# note:` line). `--view-clear` clears it. To change what is
   recorded, `amend` the running session: its history and every cursor stay,
   and every reader sees a `live.session_amended` event.
 - `stop` refuses with `readers_active` while another named reader is
@@ -177,7 +186,8 @@ Each operation that this guide does not cover has its own section:
 
 - One request as a span tree: `trace`, in
   [Read one request as a trace](../../docs/live/live-otel-traces.md#read-one-request-as-a-trace).
-  Keep it past eviction with `--retain`, in
+  Failed, slow (500 ms or more) and mutation traces survive eviction by
+  default; keep any other with `--retain`, in
   [Pin a trace](../../docs/live/live-otel-traces.md#pin-a-trace).
 - GraphQL response values: `trace --values`, in
   [Response values](../../docs/live/live-otel-traces.md#response-values).

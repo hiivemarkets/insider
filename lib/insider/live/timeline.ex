@@ -25,6 +25,7 @@ defmodule Insider.Live.Timeline do
   alias Insider.Live.Marks
   alias Insider.Live.Options
   alias Insider.Live.QueryShapes
+  alias Insider.Live.Retention
 
   @slack_us 1_000
   @wait_shown_us 100_000
@@ -887,6 +888,8 @@ defmodule Insider.Live.Timeline do
       case pinned do
         "explicit" -> "pinned with --retain"
         "mutation" -> "kept because it ran a GraphQL mutation"
+        "failed" -> "kept because it failed"
+        "slow" -> "kept because it was slow (≥ #{Retention.bounds()["slow_trace_ms"]} ms)"
         _auto -> "kept by --retain-traces"
       end
 

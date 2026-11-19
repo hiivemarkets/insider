@@ -145,7 +145,8 @@ defmodule Insider.Live.Welcome do
         "Events after a cursor (an integer, \"latest\" for the newest receipt, or \"mark\" or \"mark:LABEL\" for after a pairing mark, " <>
           "with the batch's mark naming it) in receipt order, with " <>
           "next_cursor, gaps, filtered, truncated, and truncated_by. The options map is optional; its view " <>
-          "narrows only this reader's events, limit and max_bytes count only the events returned, and reader " <>
+          "narrows only this read (view_keep makes it the reader's stored view; a named read without a view applies " <>
+          "the stored one and says so in stored_view), limit and max_bytes count only the events returned, and reader " <>
           "names you in status. upto bounds the read at a receipt between the starting cursor and the newest receipt: " <>
           "the read is complete when it reaches it, and counts losses only up to it. " <>
           "A stopped session stays readable for bounds.stopped_readable_ms. A batch that shows a crash or exception carries hints: " <>
@@ -322,7 +323,9 @@ defmodule Insider.Live.Welcome do
       "renews_lease" => false,
       "summary" =>
         "Pushes {:insider_live_events, session_id, batch} to a pid from its cursor (default 0, or \"latest\"), " <>
-          "through the optional view, until its max_events are sent; each batch starts where the previous one ended. " <>
+          "through the optional view (else the reader's stored view as it is when it subscribes, named in stored_view " <>
+          "with source subscription_snapshot), until its max_events are sent; " <>
+          "each batch starts where the previous one ended. " <>
           "A reader name marks it subscribed in status. The observer's watch subscribes and renews the lease for you."
     },
     %{
@@ -374,6 +377,9 @@ defmodule Insider.Live.Welcome do
   # observer's `help` text; a Lab test parses every example with the
   # observer's own parser, so an example that no longer parses fails it.
   @observer_target_flags ["--cookie-file", "--force-load", "--load", "--node", "--timeout-ms"]
+  # Short receipts of an action: they neither carry nor deliver the welcome
+  # quick start. The observer's delivery reads this list.
+  @observer_receipts ["mark", "amend", "stop", "renew", "chart", "reports", "reports submit"]
   # The recording flags `start` takes and `amend` changes.
   @recording_flags [
     "--calls",
@@ -545,6 +551,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -579,6 +586,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -632,6 +640,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -665,6 +674,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -674,7 +684,8 @@ defmodule Insider.Live.Welcome do
       ],
       "summary" =>
         "Prints one trace: its spans as a tree with the same trace's Logger and Telemetry events in time order. " <>
-          "--retain pins it, so it and its later events survive the Recorder's eviction (or start with --retain-traces N); " <>
+          "A trace that failed, was slow (500 ms or more) or ran a GraphQL mutation survives the Recorder's eviction by default " <>
+          "(its retention says why); --retain pins any other, so it and its later events survive too (or start with --retain-traces N); " <>
           "--values (rich profile) adds its GraphQL response values, narrowed with --values-path. " <>
           "--human prints the span tree as text, each span with its duration and outcome (a GraphQL operation's result kind, " <>
           "error codes and paths, or payload error fields); --collapse sql,auth folds each run of such siblings into one counted line " <>
@@ -698,6 +709,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -724,6 +736,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -756,6 +769,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -785,6 +799,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -860,6 +875,7 @@ defmodule Insider.Live.Welcome do
         "--view-clear",
         "--view-exclude-kind",
         "--view-exclude-signature",
+        "--view-keep",
         "--view-kind",
         "--view-min-severity",
         "--view-route",
@@ -1169,7 +1185,7 @@ defmodule Insider.Live.Welcome do
       "look_for" =>
         "Start every investigation with a digest of the running session (start one with start \"${N[@]}\" if active_session_id is null, then act). " <>
           "Read its anomalies first: each is one line with the next command to run (--human prints them right after the first line). " <>
-          "A Note: line under the first says a view your reader set on an earlier read is hiding events; --view-clear removes it. " <>
+          "A Note: first line says your reader's stored view (kept with --view-keep) narrowed the read; --view-clear removes it. " <>
           "crash_loops names each restarting child with its period_ms and reason_fingerprint; error_signatures groups the errors by kind, " <>
           "offender, exception module and message head; latency lists the slowest Telemetry kinds (p50_us, p95_us, max_us); processes the longest mailboxes; " <>
           "vm the change of each VM metric over the window; filtered and gaps what was not recorded or lost. --human prints the same as a few lines for the developer. " <>
@@ -1656,6 +1672,10 @@ defmodule Insider.Live.Welcome do
   @spec observer_target_flags() :: [String.t()]
   def observer_target_flags, do: @observer_target_flags
 
+  @doc "The observer commands that neither carry nor deliver the welcome quick start."
+  @spec observer_receipts() :: [String.t()]
+  def observer_receipts, do: @observer_receipts
+
   @doc "The observer's error codes: code => {status, message}."
   @spec observer_errors() :: %{String.t() => {String.t(), String.t()}}
   def observer_errors, do: @observer_errors
@@ -1934,8 +1954,12 @@ defmodule Insider.Live.Welcome do
       {"--view-trace", "TRACE_ID: 32 lowercase hex digits; keeps that trace's events",
        "view.traces"},
       {"--view-clear",
-       "no value: clear your reader's own view (with --reader); other view flags replace it instead",
+       "no value: clear your reader's stored view (with --reader); with other view flags, they replace it, as with --view-keep",
        nil},
+      {"--view-keep",
+       "no value: keep this read's view flags as your reader's stored view (needs --reader and a view flag): your later reads " <>
+         "without view flags apply it and say so first (stored_view); without --view-keep a view narrows only its own read",
+       "read.view_keep"},
       {"--category", choice(options["report"]["category"]["allowed"]), "report.category"},
       {"--message",
        "TEXT: at most #{options["report"]["message"]["max_bytes"]} bytes of UTF-8, quoted; no event payloads or secrets",
@@ -2267,13 +2291,15 @@ defmodule Insider.Live.Welcome do
         "recording" =>
           "components, Telemetry events, measurements and filters decide what the session records, for every reader; amend changes them for everyone",
         "view" =>
-          "--view-* flags and the view option narrow only the read or watch that passes them; other readers are unaffected"
+          "--view-* flags and the view option narrow only the read or watch that passes them, unless --view-keep keeps them " <>
+            "as your reader's stored view; other readers are unaffected"
       },
       "steps" => [
         "Pass --reader NAME (your own name) to every read (events, watch, digest, trends, trace, timeline) and to stop and amend. status.readers lists each named reader with its cursor, behind, last_seen_ms_ago, subscribed and view.",
         "Your view is yours: --view-exclude-signature hides a known error signature (a digest signature id, a reason_fingerprint prefix, or a module), " <>
           "--view-service, --view-route and --view-trace keep only the traces you care about across services. " <>
-          "The view given with --reader becomes your own view for every later read; --view-clear clears it. It never changes what is recorded.",
+          "A view narrows only the read that gives it; --view-keep keeps it as your stored view for your later reads, which then say so " <>
+          "first (stored_view), and --view-clear clears it. It never changes what is recorded.",
         "Join a running session from cursor latest rather than starting another: one session exists per node.",
         "stop --reader NAME refuses with readers_active while another named reader read within #{@reader_active_s} s or is subscribed; " <>
           "the error names them and retry_after_ms. --force stops anyway.",
@@ -2455,8 +2481,12 @@ defmodule Insider.Live.Welcome do
             "events and watch take --format: json (default) drops the event envelope fields that are null, empty, or the same for every event; full prints events as the target returns them; " <>
             "compact prints one line per event and one line starting with # per batch (next_cursor, truncation, disclosure profile, gaps, filtered), while errors stay JSON. " <>
             "digest --human prints plain text; it neither carries nor delivers the welcome. " <>
-            "The first command run against a target node carries the welcome quick start under \"welcome\" (a compact read prints a # line naming the welcome command instead); later ones carry a pointer with the delivered hash. " <>
-            "Delivery is recorded per node name and distribution creation, which changes when the node restarts, in the observer's reports directory, which every observer on this machine shares; printing welcome counts as delivery.",
+            "The first command run against a target node carries the welcome quick start under \"welcome\" (a compact read prints a # line naming the welcome command instead), " <>
+            "unless it is a receipt (#{Enum.join(@observer_receipts, ", ")}): receipts never carry it, and the next other command does. " <>
+            "After delivery only capabilities carries a pointer with the delivered hash; other commands carry no welcome. " <>
+            "Delivery is recorded per node name and distribution creation, which changes when the node restarts, in the observer's reports directory, which every observer on this machine shares; printing welcome counts as delivery. " <>
+            "installation is the whole report (builds, action, pushed applications, environment, remedy) on capabilities, after a load, and while the target runs another build; " <>
+            "every other document carries only same_build, insider_version and insider_commit.",
         "setup" => "N=(#{@target_placeholder})",
         "examples" => [
           "#{@observer_command} welcome \"${N[@]}\"",

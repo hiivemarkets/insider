@@ -22,7 +22,9 @@ in a host app, or `guides/` in an Insider checkout.
   `--cookie-file`.
 - Every `mix insider.live …` command in the guides and the reference is the
   same as `insider-lab live …`. The Mix task exists only in an Insider
-  checkout, under `tools/insider_lab`.
+  checkout, under `tools/insider_lab`. `insider-lab --help` describes the
+  escript and `insider-lab live --help` lists every operation; help and the
+  commands in hints and `next` fields name the form you ran.
 
 ## Where the docs are
 
@@ -56,6 +58,9 @@ in a host app, or `guides/` in an Insider checkout.
   stops and amends; `amend` changes recording options for everyone without
   losing history; never `--force` a stop over a peer's active reads without
   asking. Concurrent agents use the escript (`insider-lab live`).
+- A `--view-*` flag narrows only the read that gives it. `--view-keep` keeps
+  it as your reader's stored view; a later read narrowed by it carries
+  `stored_view` and starts with a note that names it. `--view-clear` drops it.
 - Disclosure depends on the node's profile. Check the welcome's
   `effective_disclosure.profile` (also `runtime.disclosure_profile`) before
   you rely on any payload. Development and test default to `rich`: events

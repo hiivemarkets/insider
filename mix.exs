@@ -1,7 +1,7 @@
 defmodule Insider.MixProject do
   use Mix.Project
 
-  @version "0.1.2"
+  @version "0.1.3"
   @source_url "https://github.com/hiivemarkets/insider"
 
   # Modules none of whose work can run below OTP 28: they need isolated

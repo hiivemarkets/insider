@@ -432,7 +432,7 @@ mix insider.live events "${N[@]}" --session SESSION_ID --cursor 0 --view-source 
 mix insider.live watch "${N[@]}" --session SESSION_ID --for 30s --view-kind 'phoenix.*'
 ```
 
-`events_since/3` and `subscribe/3` take an optional `"view"`. It narrows only that reader's events, over the same recorded stream. So several agents can read one session differently without hiding anything from each other. See [Per-reader views](live-sessions-and-readers.md#per-reader-views) for views that a named reader keeps.
+`events_since/3` and `subscribe/3` take an optional `"view"`. It narrows only that read's events, over the same recorded stream. So several agents can read one session differently without hiding anything from each other. A view applies only to the read that gives it, unless `"view_keep"` (observer `--view-keep`) keeps it as the reader's stored view. See [Per-reader views](live-sessions-and-readers.md#per-reader-views) and [Stored views](live-sessions-and-readers.md#stored-views).
 
 A view is a map of:
 

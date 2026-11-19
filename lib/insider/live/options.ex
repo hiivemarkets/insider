@@ -36,18 +36,18 @@ defmodule Insider.Live.Options do
     "telemetry_events",
     "telemetry_measurements"
   ]
-  @read_keys ["limit", "max_bytes", "reader", "renew", "scan_limit", "upto", "view"]
+  @read_keys ["limit", "max_bytes", "reader", "renew", "scan_limit", "upto", "view", "view_keep"]
   @welcome_keys ["full"]
   @discover_keys ["prefix"]
-  @subscribe_keys ["cursor", "max_events", "reader", "view"]
+  @subscribe_keys ["cursor", "max_events", "reader", "view", "view_keep"]
   @stop_keys ["force", "reader"]
   @report_keys ["category", "message"]
-  # Every read names its reader and may pass a view (`reading/1`).
-  @reading_keys ["reader", "view"]
-  @digest_keys ["human", "reader", "show_baseline", "since", "view"]
-  @baseline_keys ["clear", "human", "reader", "show", "since", "view"]
+  # Every read names its reader and may pass a view, and keep it (`reading/1`).
+  @reading_keys ["reader", "view", "view_keep"]
+  @digest_keys ["human", "reader", "show_baseline", "since", "view", "view_keep"]
+  @baseline_keys ["clear", "human", "reader", "show", "since", "view", "view_keep"]
   @baseline_since "latest-5m"
-  @trends_keys ["human", "kinds", "reader", "since", "view", "windows"]
+  @trends_keys ["human", "kinds", "reader", "since", "view", "view_keep", "windows"]
   @trends_windows %{"default" => 60, "max" => 500, "min" => 1}
   @trends_kinds_max 64
   # A digest reads its window in a few full-size reads within one budget,
@@ -79,14 +79,25 @@ defmodule Insider.Live.Options do
     "retain",
     "values",
     "values_paths",
-    "view"
+    "view",
+    "view_keep"
   ]
   @retain_traces %{"default" => 0, "min" => 0, "max" => 64}
   @values_paths_max 8
   @values_path ~r/\A[A-Za-z0-9_$*.\[\]-]{1,128}\z/
   @fold_rules_max 8
   @fold_rule ~r/\A[^\s\x00-\x1f\x7f]{1,64}\z/u
-  @timeline_keys ["human", "limit", "max_bytes", "pid", "reader", "request_id", "since", "view"]
+  @timeline_keys [
+    "human",
+    "limit",
+    "max_bytes",
+    "pid",
+    "reader",
+    "request_id",
+    "since",
+    "view",
+    "view_keep"
+  ]
   @correlated_limit %{"default" => 200, "max" => 1_000, "min" => 1}
   @correlated_max_bytes %{"default" => 262_144, "max" => 1_048_576, "min" => 1_024}
   @correlated_budget_ms 4_000
@@ -307,7 +318,8 @@ defmodule Insider.Live.Options do
         },
         "reader" =>
           reader_option("names this reader in status, with its cursor and when it last read"),
-        "view" => View.describe()
+        "view" => View.describe(),
+        "view_keep" => view_keep_option()
       },
       "subscribe" => %{
         "cursor" => %{
@@ -321,7 +333,8 @@ defmodule Insider.Live.Options do
             "note" => "events pushed to this subscriber in total; then it is sent nothing more"
           }),
         "reader" => reader_option("names this subscriber's reader in status, marked subscribed"),
-        "view" => View.describe()
+        "view" => View.describe(),
+        "view_keep" => view_keep_option()
       },
       "discover" => %{
         "prefix" => %{
@@ -577,29 +590,42 @@ defmodule Insider.Live.Options do
     %{
       "reader" =>
         reader_option(
-          "names this reader in status; without view, the reader's own view applies, else the view given becomes it"
+          "names this reader in status; without view, the reader's stored view (kept with view_keep) applies, " <>
+            "and the result says so in stored_view"
         ),
-      "view" => View.describe()
+      "view" => View.describe(),
+      "view_keep" => view_keep_option()
+    }
+  end
+
+  defp view_keep_option do
+    %{
+      "type" => "boolean",
+      "default" => false,
+      "note" =>
+        "true makes the view given this reader's stored view, which its later reads without a view apply " <>
+          "(their results carry stored_view); needs reader and a non-empty view; an empty view clears the stored view"
     }
   end
 
   @doc """
-  A read's `"reader"` and `"view"`: the reader's name (`nil` when unnamed)
-  and the view, `:keep` when none was given (a named reader's own view
-  then applies) or the validated view spec given (`nil` clears it).
+  A read's `"reader"`, `"view"` and `"view_keep"`: the reader's name (`nil`
+  when unnamed); the view, `:keep` when none was given (a named reader's
+  stored view then applies) or the validated view spec given, which
+  narrows this read only (`nil` clears the stored view); and `store`,
+  whether the view given becomes the reader's stored view
+  (`"view_keep"`, which needs a reader and a non-empty view).
   """
   @spec reading(map()) ::
-          {:ok, %{reader: String.t() | nil, view: :keep | map() | nil}} | {:error, map()}
+          {:ok, %{reader: String.t() | nil, view: :keep | map() | nil, store: boolean()}}
+          | {:error, map()}
   def reading(options) when is_map(options) and not is_struct(options) do
-    with {:ok, reader} <- reader(options) do
-      case Map.fetch(options, "view") do
-        :error ->
-          {:ok, %{reader: reader, view: :keep}}
-
-        {:ok, spec} ->
-          with {:ok, view} <- View.parse(spec),
-               do: {:ok, %{reader: reader, view: view && view.spec}}
-      end
+    with {:ok, reader} <- reader(options),
+         {:ok, view} <- given_view(options),
+         {:ok, store} <- flag(options, "view_keep") do
+      if store and (is_nil(reader) or view in [:keep, nil]),
+        do: invalid("view_keep"),
+        else: {:ok, %{reader: reader, view: view, store: store}}
     end
   end
 
@@ -648,7 +674,8 @@ defmodule Insider.Live.Options do
              human: boolean(),
              show_baseline: boolean(),
              reader: String.t() | nil,
-             view: :keep | map() | nil
+             view: :keep | map() | nil,
+             store: boolean()
            }}
           | {:error, map()}
   def digest(options, default \\ @digest_since)
@@ -675,20 +702,27 @@ defmodule Insider.Live.Options do
   @doc """
   The options of `baseline`: mark the anomalies of the window `"since"`
   (default #{@baseline_since}) normal, or `"show"` or `"clear"` the
-  baseline (at most one of them).
+  baseline (at most one of them). Only marking reads a window, so only it
+  takes `"view_keep"`.
   """
   @spec baseline(term()) :: {:ok, map()} | {:error, map()}
   def baseline(options) when is_map(options) and not is_struct(options) do
     with :ok <- known_keys(options, @baseline_keys),
          {:ok, digest} <-
-           digest(Map.take(options, ["human", "reader", "since", "view"]), @baseline_since) do
+           digest(
+             Map.take(options, ["human", "reader", "since", "view", "view_keep"]),
+             @baseline_since
+           ) do
+      store = digest.store
+
       case {Map.get(options, "clear", false), Map.get(options, "show", false)} do
         {true, true} -> invalid("clear")
+        {clear, _show} when not is_boolean(clear) -> invalid("clear")
+        {_clear, show} when not is_boolean(show) -> invalid("show")
+        {false, false} -> {:ok, Map.put(digest, :action, :set)}
+        _no_read when store -> invalid("view_keep")
         {true, false} -> {:ok, Map.put(digest, :action, :clear)}
         {false, true} -> {:ok, Map.put(digest, :action, :show)}
-        {false, false} -> {:ok, Map.put(digest, :action, :set)}
-        {clear, _show} when not is_boolean(clear) -> invalid("clear")
-        _show -> invalid("show")
       end
     end
   end
@@ -705,7 +739,8 @@ defmodule Insider.Live.Options do
              kinds: [String.t()],
              windows: pos_integer(),
              reader: String.t() | nil,
-             view: :keep | map() | nil
+             view: :keep | map() | nil,
+             store: boolean()
            }}
           | {:error, map()}
   def trends(options) when is_map(options) and not is_struct(options) do
@@ -960,6 +995,16 @@ defmodule Insider.Live.Options do
 
   def amend(_options), do: invalid("options")
 
+  defp given_view(options) do
+    case Map.fetch(options, "view") do
+      :error ->
+        {:ok, :keep}
+
+      {:ok, spec} ->
+        with {:ok, view} <- View.parse(spec), do: {:ok, view && view.spec}
+    end
+  end
+
   defp reader(options) do
     case Map.get(options, "reader") do
       nil ->
@@ -1011,6 +1056,7 @@ defmodule Insider.Live.Options do
              hide: [String.t()],
              reader: String.t() | nil,
              view: :keep | map() | nil,
+             store: boolean(),
              retain: boolean(),
              values: boolean(),
              values_paths: [String.t()]
@@ -1081,7 +1127,7 @@ defmodule Insider.Live.Options do
     end
   end
 
-  @changes_keys ["human", "key", "reader", "view"]
+  @changes_keys ["human", "key", "reader", "view", "view_keep"]
 
   @doc "The options of `changes`: one key (at most 128 bytes), or every key."
   @spec changes(term()) :: {:ok, map()} | {:error, map()}
@@ -1109,7 +1155,7 @@ defmodule Insider.Live.Options do
   @spec changes_keys() :: [String.t()]
   def changes_keys, do: @changes_keys
 
-  @mutations_keys ["human", "id", "reader", "view"]
+  @mutations_keys ["human", "id", "reader", "view", "view_keep"]
 
   @doc "The options of `mutations`: one record id among the arguments (at most 64 bytes), or every record."
   @spec mutations(term()) :: {:ok, map()} | {:error, map()}

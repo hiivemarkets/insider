@@ -44,6 +44,8 @@ mix escript.install hex insider_lab
 
 Mix installs it in its escripts directory, usually `~/.mix/escripts`, and
 prints that directory. Add it to your `PATH`. Install again to update.
+`insider-lab --help` then says what the escript does and names its
+commands.
 
 In an Insider checkout, use the Mix task from `tools/insider_lab` instead:
 `mix insider.live` takes the same operations and flags as
@@ -92,6 +94,12 @@ A read without `--session` uses the node's active session. `stop`, `amend`
 and `otlp-receive` still need `--session`. See
 [Default session](live/live-api-and-transports.md#default-session).
 
+A `--view-*` flag, such as `--view-min-severity warning`, narrows only the
+read that gives it, even with `--reader`. Add `--view-keep` to keep it as
+your reader's view for later reads, which then start with a note that names
+it; `--view-clear` drops it. See
+[Stored views](live/live-sessions-and-readers.md#stored-views).
+
 ### 4. Or use Tidewave `project_eval`
 
 In a Phoenix development server with Tidewave, evaluate the same operations
@@ -129,6 +137,12 @@ and
 - Point your agent at the welcome document and let it drive. The welcome is
   generated from the code, so it matches the Insider that is loaded.
 - Use Insider next to Tidewave, not instead of it.
+- The Recorder holds at most 4,096 events (`--max-events`), so busy traffic
+  evicts older ones. Traces that failed, were slow (500 ms or more), or ran
+  a GraphQL mutation are kept by default, so `trace` finds the request you
+  just reproduced. Keep any other trace with `trace --retain`, or the N
+  latest with `start --retain-traces N`. See
+  [Pin a trace](live/live-otel-traces.md#pin-a-trace).
 - Found something wrong? Run
   `insider-lab live report --category bug --message '…'`. Reports stay local
   until you send them.
@@ -137,8 +151,10 @@ and
 
 The full flag reference is under
 [Observer flag reference](live/live-api-and-transports.md#observer-flag-reference),
-and `insider-lab live --help` prints it. The [cheat sheet](cheat-sheet.md)
-has the commands you use most.
+and `insider-lab live --help` prints it. Help and the commands that the
+observer prints in hints name the form you ran: `insider-lab live` for the
+escript, `mix insider.live` for the Mix task. The
+[cheat sheet](cheat-sheet.md) has the commands you use most.
 
 ## Add Insider to your app
 

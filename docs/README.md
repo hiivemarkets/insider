@@ -69,7 +69,7 @@ README describes.
 | Pages hang, but each request looks fast | [Request waits and bursts](live/live-otel-traces.md#request-waits-and-bursts), then [One-shot inspections](live/live-runtime-evidence.md#one-shot-inspections) | ~46 + ~136 lines |
 | Investigate a stuck process or a growing mailbox | [One-shot inspections](live/live-runtime-evidence.md#one-shot-inspections), [Process and ETS evidence](live/live-runtime-evidence.md#process-and-ets-evidence) | ~136 + ~116 lines |
 | Read one request as a trace | [Read one request as a trace](live/live-otel-traces.md#read-one-request-as-a-trace) | ~80 lines |
-| Keep a trace past eviction | [Pin a trace](live/live-otel-traces.md#pin-a-trace) | ~52 lines |
+| Keep a trace past eviction, or see which traces are kept by default | [Pin a trace](live/live-otel-traces.md#pin-a-trace) | ~63 lines |
 | See the values a GraphQL response returned | [Response values](live/live-otel-traces.md#response-values) | ~42 lines |
 | Find an N+1 or a repeated query | [Repeated query shapes](live/live-otel-traces.md#repeated-query-shapes) | ~49 lines |
 | Follow an Oban job | [Oban jobs](live/live-otel-traces.md#oban-jobs) | ~17 lines |

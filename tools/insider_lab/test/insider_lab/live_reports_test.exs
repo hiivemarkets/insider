@@ -866,6 +866,8 @@ defmodule Insider.Lab.LiveReportsTest do
 
     assert implemented == documented
     assert flags(CLI.target_flags()) == Welcome.observer_target_flags()
+    # Every receipt, which never carries the welcome, is an observer command.
+    assert Welcome.observer_receipts() -- Map.keys(documented) == []
 
     assert flags(CLI.repeatable()) ==
              Enum.sort(Welcome.contract()["transports"]["observer"]["repeatable"])

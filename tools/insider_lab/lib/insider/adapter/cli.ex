@@ -34,6 +34,34 @@ defmodule Insider.Adapter.CLI do
   @exit_timeout 124
   @exit_cancelled 130
 
+  # The escript's own help: `insider-lab` alone, `--help`, `-h` or `help`.
+  # The observer's help is `insider-lab live --help`.
+  @help """
+  insider-lab: the command-line observer for Insider. It attaches to a running
+  BEAM node on this machine over Erlang distribution and reads what the node
+  is doing: its events, digests, traces and processes.
+
+  Usage:
+    insider-lab live OPERATION [--node NAME@HOST --cookie-file PATH] [OPTIONS]
+        Observe a node. insider-lab live --help lists every operation.
+    insider-lab --discover
+        Print the protocol's discovery document (insider.cli.discovery/v1).
+    insider-lab --json
+        Read one insider.request/v1 JSON request on stdin and print its result.
+    insider-lab --ndjson
+        Read one request per line on stdin and print one result per line.
+    insider-lab --help
+        Print this text.
+
+  --json and --ndjson answer runtime.capabilities and report every other
+  protocol operation unsupported: this executable runs no operations itself.
+
+  Next:
+    insider-lab live --help
+    N=(--node "my_app@$(hostname -s)" --cookie-file "$HOME/.my_app.cookie")
+    insider-lab live capabilities "${N[@]}" --load   # first contact
+  """
+
   @request_fields [
     "budget",
     "caller",
@@ -176,7 +204,9 @@ defmodule Insider.Adapter.CLI do
   @doc false
   @spec main([String.t()]) :: no_return()
   def main(["live" | args]) do
-    System.halt(Insider.Lab.Live.CLI.run(args, &Insider.Lab.Output.write/1))
+    System.halt(
+      Insider.Lab.Live.CLI.run(args, &Insider.Lab.Output.write/1, invocation: "insider-lab live")
+    )
   end
 
   def main(args) do
@@ -200,6 +230,9 @@ defmodule Insider.Adapter.CLI do
   @doc false
   @spec run_once([String.t()], (pos_integer() -> binary() | :eof | {:error, term()})) ::
           {binary(), non_neg_integer()}
+  def run_once(arguments, _reader) when arguments in [[], ["--help"], ["-h"], ["help"]],
+    do: {@help, @exit_ok}
+
   def run_once(["--discover"], _reader) do
     {:ok, bytes} = Wire.encode(discovery())
     {bytes <> "\n", @exit_ok}
@@ -213,7 +246,12 @@ defmodule Insider.Adapter.CLI do
     end
   end
 
-  def run_once(_args, _reader), do: transport_error("usage")
+  def run_once(_args, _reader) do
+    "usage"
+    |> adapter_error()
+    |> Map.put("help", "insider-lab --help")
+    |> bounded_encode(@exit_input)
+  end
 
   defp dispatch(request, dispatcher, projection),
     do: execute_bounded(dispatcher, request, projection)

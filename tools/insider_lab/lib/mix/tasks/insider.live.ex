@@ -4,7 +4,8 @@ defmodule Mix.Tasks.Insider.Live do
   The observer, as a Mix task of the `insider_lab` package. The core
   package, `insider`, has no Mix tasks. Outside an Insider checkout, use the
   escript instead: `mix escript.install hex insider_lab`, then
-  `insider-lab live`, with the same operations, flags and output.
+  `insider-lab live`, with the same operations, flags and output
+  (`insider-lab --help` describes the escript).
 
   Attaches to another BEAM node on this machine over Erlang distribution and
   drives its `Insider.Live` session, printing canonical JSON.
@@ -25,7 +26,9 @@ defmodule Mix.Tasks.Insider.Live do
       mix insider.live reports submit [--confirm]
 
   `--help`, `help OPERATION`, and `OPERATION --help` print usage text with
-  each flag's value syntax and examples, and exit 0. Operations: `welcome`,
+  each flag's value syntax and examples, and exit 0. Help, usage errors, and
+  the commands the target prints in hints and `next` fields name
+  `mix insider.live` here and `insider-lab live` in the escript. Operations: `welcome`,
   `capabilities`, `start`, `events`, `status`, `renew`, `stop`, `watch`,
   `report`, `reports`, and `reports submit`. An agent starts with `welcome`,
   the target's agent quick start (`--full` for the whole generated

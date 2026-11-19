@@ -453,22 +453,38 @@ defmodule Insider.Live.Owner do
   # A subscription starts at cursor 0, at a cursor no newer than the newest
   # receipt, or at `"latest"`, the newest receipt now. Subscribing again
   # replaces the view and the event budget; it moves the cursor only when
-  # one is given.
+  # one is given. A subscription without a view goes on through its
+  # reader's stored view, and says so; its own view becomes the stored
+  # view only with `"view_keep"`.
   defp dispatch({:subscribe, id, pid, options}, deadline, state) do
     gated(state, deadline, :subscribe, fn state ->
       {state, health} = refresh(state)
 
       with {:ok, session} <- active(state, id),
            :ok <- valid_subscriber(pid),
-           {:ok, %{reader: reader, view: given}} <- Options.reading(options),
+           {:ok, %{reader: reader, view: given} = reading} <- Options.reading(options),
            options = with_reader_view(options, session, reader, given),
            {:ok, subscription} <- Options.subscribe(options),
            {:ok, cursor} <- start_cursor(subscription.cursor, fill(session, health)),
-           {:ok, session} <- add_subscriber(session, pid, %{subscription | cursor: cursor}) do
+           subscription = %{subscription | cursor: cursor},
+           subscription =
+             Map.put(subscription, :stored, given == :keep and subscription.view != nil),
+           {:ok, session} <- add_subscriber(session, pid, subscription) do
         subscriber = Map.fetch!(session.subscribers, pid)
-        session = seen(session, subscriber.reader, subscriber.sent_cursor, given)
+        store = store_view(reading)
+        previous = get_in(session, [:readers, subscriber.reader, :view])
+        session = seen(session, subscriber.reader, subscriber.sent_cursor, store)
         state = schedule_push(%{state | session: session})
-        {{:ok, subscription(session, subscriber)}, state}
+        reply = subscription(session, subscriber)
+
+        # A subscription that kept or cleared the stored view says so, as a
+        # read does; it has read nothing yet, so it counts nothing hidden.
+        reply =
+          if subscriber.reader && store != :keep && store != previous,
+            do: Map.put(reply, "view_note", View.stored_change_note(reader, store, nil)),
+            else: reply
+
+        {{:ok, reply}, state}
       else
         {:error, error} -> {{:error, error}, state}
       end
@@ -586,11 +602,12 @@ defmodule Insider.Live.Owner do
 
   # The kept mutation records (`Insider.Live.Mutations`) of a session,
   # projected for its profile and passed through the reader's view (given
-  # in `reading`, or the named reader's own) as its events are, optionally
-  # of one trace or process. A running session is swept first. For one
-  # trace each record says whether the Recorder (or the session's archive)
-  # still holds its event (`"evicted"`). A read of a running session renews
-  # its lease.
+  # in `reading`, or the named reader's stored one) as its events are,
+  # optionally of one trace or process. A running session is swept first.
+  # For one trace each record says whether the Recorder (or the session's
+  # archive) still holds its event (`"evicted"`). A read of a running
+  # session renews its lease. Like any read, it keeps its view as the
+  # reader's stored view with `"view_keep"`, and an empty view clears it.
   defp dispatch({:mutations, id, filters, reading}, deadline, state) do
     gated(state, deadline, :reader_view, fn state ->
       with {:ok, source} <- readable(state, id),
@@ -603,7 +620,7 @@ defmodule Insider.Live.Owner do
         records =
           if match?({:running, _session}, source), do: state.session, else: records(source)
 
-        {{:ok, kept_mutations(records, filters, view)}, state}
+        {{:ok, kept_mutations(records, filters, view)}, store_reader_view(state, source, reading)}
       else
         {:error, error} -> {{:error, error}, state}
       end
@@ -898,16 +915,17 @@ defmodule Insider.Live.Owner do
 
   defp invalid_upto, do: {:error, Error.new("invalid_options", %{"field" => "upto"})}
 
-  # A named reader without a view reads through its own view; a view given
-  # with a name becomes that reader's view (`nil` or `%{}` clears it). A
-  # view scoped to services or routes is resolved against the session's
-  # trace index before the read.
+  # A named reader without a view reads through its stored view, and the
+  # batch says so (`"stored_view"`); a view given narrows only this read,
+  # and becomes the reader's stored view only with `"view_keep"` (`nil` or
+  # `%{}` clears it). A view scoped to services or routes is resolved
+  # against the session's trace index before the read.
   # A cursor given as a pairing mark (`"mark"`, `"mark:LABEL"`) reads after
   # the mark's receipt, and the batch names the mark.
   defp events_since(state, id, cursor, options, deadline, cumulative) do
     gate(state, deadline, cumulative, fn state ->
       with {:ok, source} <- readable(state, id),
-           {:ok, %{reader: reader, view: given}} <- Options.reading(options),
+           {:ok, %{reader: reader, view: given} = reading} <- Options.reading(options),
            records = records(source),
            {:ok, cursor, mark} <- from_mark(records, cursor),
            options = with_reader_view(options, records, reader, given),
@@ -915,7 +933,8 @@ defmodule Insider.Live.Owner do
         read_options =
           read_options
           |> Keyword.update!(:view, &resolve(&1, records))
-          |> Keyword.put(:store_view, given)
+          |> Keyword.put(:store_view, store_view(reading))
+          |> Keyword.put(:stored, given == :keep and Map.has_key?(options, "view"))
           |> Keyword.put(:cumulative, cumulative != false)
           |> Keyword.update!(:renew, &(&1 and cumulative != :observe))
 
@@ -996,6 +1015,32 @@ defmodule Insider.Live.Owner do
          options = with_reader_view(reading, records, reader, given),
          {:ok, read_options} <- Options.read(options) do
       {:ok, resolve(Keyword.get(read_options, :view), records)}
+    end
+  end
+
+  # The view a read leaves as its reader's stored view: none when it gave
+  # an empty view, the view it gave with `"view_keep"`, else the stored one
+  # as it was (`:keep`).
+  defp store_view(%{view: nil}), do: nil
+  defp store_view(%{view: view, store: true}), do: view
+  defp store_view(_reading), do: :keep
+
+  # A mutations read stores its reader's view as `read_batch/5` does.
+  defp store_reader_view(state, source, reading) do
+    {:ok, %{reader: reader} = parsed} = Options.reading(reading)
+
+    case {reader, store_view(parsed), source} do
+      {nil, _view, _source} ->
+        state
+
+      {_reader, :keep, _source} ->
+        state
+
+      {reader, view, {:running, _session}} ->
+        %{state | session: seen(state.session, reader, :keep, view)}
+
+      {reader, view, {:retained, terminal}} ->
+        put_terminal(state, %{terminal | retained: seen(terminal.retained, reader, :keep, view)})
     end
   end
 
@@ -1225,12 +1270,14 @@ defmodule Insider.Live.Owner do
   # session's retained archive), and `source` with the batch's baseline
   # and the named reader's new cursor and view. A cumulative read (a trace
   # or timeline scan page) marks the reader seen without moving its cursor.
-  # A named reader's batch says which view it was read through.
+  # A named reader's batch says which view it was read through, and, when
+  # that was its stored view (`stored`), says so at the top level.
   defp read_batch(source, cursor, read_options, timeout_ms, extra) do
     {view, limits} = Keyword.pop(read_options, :view)
     {reader, limits} = Keyword.pop(limits, :reader)
     {cumulative, limits} = Keyword.pop(limits, :cumulative, false)
     {store_view, limits} = Keyword.pop(limits, :store_view, :keep)
+    {stored, limits} = Keyword.pop(limits, :stored, false)
 
     with {:ok, {read, hidden}} <- scan(source, cursor, view, Map.new(limits), timeout_ms) do
       # `"latest"` is resolved by the read, so the baseline is looked up
@@ -1255,6 +1302,7 @@ defmodule Insider.Live.Owner do
           do:
             batch
             |> Map.merge(%{"reader" => reader, "view" => view && view.spec})
+            |> put_stored_view(reader, view, stored)
             |> put_view_note(source, reader, store_view),
           else: batch
 
@@ -1609,14 +1657,17 @@ defmodule Insider.Live.Owner do
   # sweep from the session's first receipt.
   defp put_config(session, parsed) do
     # With the telemetry component, the traces of mutation requests are
-    # kept by default (`Insider.Live.Retention`), as their records are.
+    # kept by default (`Insider.Live.Retention`), as their records are;
+    # with any component that records traced events, failed and slow traces.
     telemetry? = :telemetry in parsed.components
+    notable? = Enum.any?([:logger, :telemetry, :otel], &(&1 in parsed.components))
 
     retention =
       (Map.get(session, :retention) || Retention.new(parsed.retain_traces))
       |> Retention.set_limit(parsed.retain_traces)
       |> Retention.keep_mutations(telemetry?)
-      |> then(&if(parsed.retain_traces > 0 or telemetry?, do: Retention.start(&1, 0), else: &1))
+      |> Retention.keep_notable(notable?)
+      |> then(&if(parsed.retain_traces > 0 or notable?, do: Retention.start(&1, 0), else: &1))
 
     # Every mutation the telemetry component records keeps a compact record.
     mutations =
@@ -1786,6 +1837,7 @@ defmodule Insider.Live.Owner do
           %{
             monitor: Process.monitor(pid),
             view: subscription.view,
+            stored: subscription.stored,
             reader: subscription.reader,
             remaining: subscription.max_events,
             hidden: %{},
@@ -1802,6 +1854,7 @@ defmodule Insider.Live.Owner do
     %{
       subscriber
       | view: subscription.view,
+        stored: subscription.stored,
         reader: subscription.reader,
         remaining: subscription.max_events
     }
@@ -1812,6 +1865,7 @@ defmodule Insider.Live.Owner do
     |> Map.merge(positioned(session, subscription.cursor))
     |> Map.merge(%{
       view: subscription.view,
+      stored: subscription.stored,
       reader: subscription.reader,
       remaining: subscription.max_events,
       hidden: %{}
@@ -2227,18 +2281,36 @@ defmodule Insider.Live.Owner do
     batch = Map.put(batch, "cursor", subscriber.sent_cursor)
 
     # A named subscriber's batches, its last included, say whose they are
-    # and the view they were read through, as a named read's do.
+    # and the view they were read through, as a named read's do. A view it
+    # inherited is the snapshot taken when it subscribed, which later
+    # changes to the reader's stored view do not reach, and it says so.
     batch =
       if subscriber.reader,
         do:
-          Map.merge(batch, %{
+          batch
+          |> Map.merge(%{
             "reader" => subscriber.reader,
             "view" => subscriber.view && subscriber.view.spec
-          }),
+          })
+          |> put_snapshot_view(subscriber),
         else: batch
 
     {batch, counters, counts, hidden}
   end
+
+  defp put_snapshot_view(batch, %{stored: true} = subscriber),
+    do:
+      Map.put(
+        batch,
+        "stored_view",
+        View.subscription_snapshot(
+          subscriber.reader,
+          subscriber.view.spec,
+          get_in(batch, ["filtered", "view"])
+        )
+      )
+
+  defp put_snapshot_view(batch, _subscriber), do: batch
 
   # A push returns no more events than the subscriber's remaining budget.
   defp push_limits(subscriber) do
@@ -2364,11 +2436,12 @@ defmodule Insider.Live.Owner do
   end
 
   # Recording filters apply to every reader of the session; a view only to
-  # the read or watch that passes it. Every configuration says so.
+  # the read or watch that passes it, unless kept. Every configuration says so.
   @scope %{
     "filters" =>
       "record time: components, events, measurements and filters decide what this session records, for every reader; amend changes them for everyone",
-    "view" => "read time: a view narrows only the events or watch call that passes it"
+    "view" =>
+      "read time: a view narrows only the read or watch that passes it; with view_keep it becomes that reader's stored view"
   }
 
   # Each subscribed Telemetry event, with whether this session's handler is
@@ -2443,8 +2516,9 @@ defmodule Insider.Live.Owner do
   # Readers name themselves on reads, subscriptions, stops, and amendments.
   # A named read or delivered batch records the reader's cursor and when it
   # was seen (a trace or timeline scan, which reads the session newest
-  # first, keeps the cursor: `:keep`), and a read that gave a view makes it
-  # the reader's own view (`nil` clears it). Beyond `@readers_max` the
+  # first, keeps the cursor: `:keep`), and a read that kept its view
+  # (`"view_keep"`) makes it the reader's stored view (`nil` clears it); any
+  # other read leaves the stored view as it was (`:keep`). Beyond `@readers_max` the
   # least recently seen unsubscribed reader is forgotten. A subscribed
   # reader is never forgotten, so it holds a stop until it unsubscribes: at
   # most `@readers_max` plus the subscriber bound are kept.
@@ -2476,32 +2550,31 @@ defmodule Insider.Live.Owner do
   end
 
   # A read that changes its reader's stored view says so: the view now
-  # applies to the reader's later reads. Otherwise a read's --view-kind
-  # silently becomes the reader's view and hides events from its next
-  # digest.
+  # applies to the reader's later reads, or no longer does.
   defp put_view_note(batch, _source, _reader, :keep), do: batch
 
   defp put_view_note(batch, source, reader, given) do
-    previous = get_in(source, [:readers, reader, :view])
-
-    cond do
-      given == previous ->
-        batch
-
-      is_nil(given) ->
-        Map.put(batch, "view_note", "reader #{reader}'s view is cleared")
-
-      true ->
-        hidden = (get_in(batch, ["filtered", "view"]) || %{}) |> Map.values() |> Enum.sum()
-
+    if given == get_in(source, [:readers, reader, :view]),
+      do: batch,
+      else:
         Map.put(
           batch,
           "view_note",
-          "this view is now reader #{reader}'s view for its later reads (events, digest, trace, timeline) " <>
-            "until --view-clear; it hid #{hidden} events here"
+          View.stored_change_note(reader, given, get_in(batch, ["filtered", "view"]) || %{})
         )
-    end
   end
+
+  # A read without a view of its own that its reader's stored view
+  # narrowed says so at the top level, so the narrowing is never silent.
+  defp put_stored_view(batch, reader, view, true),
+    do:
+      Map.put(
+        batch,
+        "stored_view",
+        View.stored(reader, view.spec, get_in(batch, ["filtered", "view"]))
+      )
+
+  defp put_stored_view(batch, _reader, _view, false), do: batch
 
   defp subscribed_names(source),
     do: for({_pid, %{reader: name}} <- source.subscribers, name, into: MapSet.new(), do: name)
@@ -2937,7 +3010,8 @@ defmodule Insider.Live.Owner do
   defp reason_text(_reason), do: "unavailable"
 
   # `cursor` is where the subscriber's next batch starts and `max_events`
-  # its remaining event budget (`nil` when unlimited).
+  # its remaining event budget (`nil` when unlimited). A subscription that
+  # goes on through its reader's stored view says so.
   defp subscription(session, subscriber) do
     %{
       "schema" => "insider.live-subscription/v1",
@@ -2950,6 +3024,7 @@ defmodule Insider.Live.Owner do
       "max_events" => subscriber && subscriber.remaining,
       "reader" => subscriber && subscriber.reader
     }
+    |> then(&if(subscriber, do: put_snapshot_view(&1, subscriber), else: &1))
   end
 
   defp expires_at(session) do

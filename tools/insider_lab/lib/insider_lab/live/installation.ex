@@ -58,6 +58,18 @@ defmodule Insider.Lab.Live.Installation do
     end
   end
 
+  # The installation as `operation`'s document carries it: the whole report
+  # for `capabilities`, after a load, or when the target runs another build
+  # (whose `remedy` matters); otherwise only `same_build`, `insider_version`
+  # and `insider_commit`.
+  @doc false
+  @spec for_operation(report(), String.t()) :: report()
+  def for_operation(%{"same_build" => true, "action" => "none"} = report, operation)
+      when operation != "capabilities",
+      do: Map.take(report, ["same_build", "insider_version", "insider_commit"])
+
+  def for_operation(report, _operation), do: report
+
   defp local_version do
     _loaded = Application.load(:insider)
     :insider |> Application.spec(:vsn) |> to_string()

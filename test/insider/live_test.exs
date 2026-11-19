@@ -1990,8 +1990,11 @@ defmodule Insider.LiveTest do
 
       :ok = :sys.resume(collector)
       # Status is handled after the held ingest call, which it follows in
-      # the collector's mailbox.
-      assert {:ok, ^before} = Insider.Collector.Otel.status(collector)
+      # the collector's mailbox. `pending` is the collector's queue length:
+      # an otel session keeps failed and slow traces, so the owner's
+      # retention sweep may have queued a drain request behind it.
+      assert {:ok, now} = Insider.Collector.Otel.status(collector)
+      assert Map.delete(now, :pending) == Map.delete(before, :pending)
       assert {:ok, %{"events" => events}} = Live.events_since(id, 0)
       refute Enum.any?(events, &(&1["event"]["kind"] == "otel.span"))
 

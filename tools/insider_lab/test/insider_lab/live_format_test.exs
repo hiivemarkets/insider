@@ -619,19 +619,76 @@ defmodule Insider.Lab.LiveFormatTest do
                "duration_us=3100 worker=Oban.Pro.Decorator queue=notifications attempt=1/20"
   end
 
-  test "a compact batch that set the reader's view says so before its trailer" do
+  test "a compact batch that kept the reader's view says so first" do
     batch = %{
-      "events" => [],
+      "events" => [%{"receipt" => 3, "event" => full_event(%{})}],
       "cursor" => 0,
       "next_cursor" => 5,
       "view_note" =>
-        "this view is now reader agent-a's view for its later reads (events, digest, trace, timeline) until --view-clear; it hid 5 events here"
+        "this view is now reader agent-a's stored view for its later reads (events, watch, digest, trends, trace, " <>
+          "timeline, changes, mutations) until --view-clear; it hid 5 events here"
     }
 
     text = batch |> Format.batch_lines() |> IO.iodata_to_binary()
 
     assert text =~
-             ~r/\A# note: this view is now reader agent-a's view .* until --view-clear; it hid 5 events here\n# batch /
+             ~r/\A# note: this view is now reader agent-a's stored view .* until --view-clear; it hid 5 events here\n3 /
+  end
+
+  # A trace read through a stored view the reader had forgotten showed one
+  # orphan span, and the only notice was a note at the bottom.
+  test "a compact events batch read through the reader's stored view names it on its first line" do
+    note =
+      "reader hunt's stored view (min_severity warning, kept with --view-keep) hid 1071 events from this read; " <>
+        "--view-clear clears it"
+
+    batch = %{
+      "events" => [%{"receipt" => 3, "event" => full_event(%{})}],
+      "cursor" => 0,
+      "next_cursor" => 5,
+      "stored_view" => %{"reader" => "hunt", "hidden" => 1071, "note" => note}
+    }
+
+    assert [first | _rest] =
+             batch |> Format.batch_lines() |> IO.iodata_to_binary() |> String.split("\n")
+
+    assert first == "# note: " <> note
+
+    # A watch says so once, when it subscribes, not on every pushed batch.
+    refute batch |> Format.batch_lines(:watch) |> IO.iodata_to_binary() =~ "# note:"
+
+    subscribed = %{
+      "kind" => "subscribed",
+      "target" => "shop@host",
+      "result" => %{"session_id" => "live-1"},
+      "subscription" => %{"cursor" => 0, "stored_view" => %{"note" => note}}
+    }
+
+    assert {:text, text} = Format.render("watch", %{format: "compact"}, subscribed)
+
+    assert [^first, "# subscribed " <> _ | _rest] =
+             text |> IO.iodata_to_binary() |> String.split("\n")
+  end
+
+  test "a compact watch that kept or cleared its reader's view says so before its subscribed line" do
+    for note <- [
+          "this view is now reader hunt's stored view for its later reads (events, watch, digest, trends, " <>
+            "trace, timeline, changes, mutations) until --view-clear",
+          "reader hunt's stored view is cleared"
+        ] do
+      subscribed = %{
+        "kind" => "subscribed",
+        "target" => "shop@host",
+        "result" => %{"session_id" => "live-1"},
+        "subscription" => %{"cursor" => 0, "view_note" => note}
+      }
+
+      assert {:text, text} = Format.render("watch", %{format: "compact"}, subscribed)
+      expected = "# note: " <> note
+
+      assert [^expected, "# subscribed " <> _ | _rest] =
+               text |> IO.iodata_to_binary() |> String.split("\n")
+    end
   end
 
   test "watch lines, and the digest's human text" do

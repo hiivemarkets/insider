@@ -14,26 +14,43 @@ defmodule Insider.Live.Retention do
   # new event of a kept trace. Disclosure is applied when a trace is read,
   # so a narrowed profile applies to kept events too.
   #
-  # Mutation traces (`keep_mutations`, on by default for a session with the
-  # telemetry component, so `trace` finds a mutation's trace without
-  # `--retain-traces`): the trace of an
-  # `absinthe.execute.operation.stop` whose GraphQL outcome is a mutation is
-  # kept, at most @max_mutation_traces, the oldest let go first. Its events
-  # before the stop come from a lookback of the last @max_lookback traced
-  # events (and @max_lookback_bytes) the sweep saw, and of the automatic
-  # traces `retain_traces` let go; those that fell out of it count as the
-  # trace's `lost`. Those counters are kept for the @max_rolled traces
-  # updated last; past that the least recently updated goes, counted as
-  # `loss_counters_evicted` (that trace's later loss is then unknown).
-  # Default mutation retention never costs what `--retain` and
-  # `retain_traces` keep: an automatic trace that runs a mutation stays
-  # automatic until the pool lets it go, and only then becomes a mutation
-  # trace; past the store's bounds mutation traces go first.
+  # Traces kept by default, each for a reason and in its own pool of at
+  # most @max_default_traces, the least recently active let go first, so a
+  # burst of one kind (failing background calls) never costs another:
+  #
+  # - `mutation` (`keep_mutations`, on for a session with the telemetry
+  #   component): an `absinthe.execute.operation.stop` whose GraphQL
+  #   outcome is a mutation;
+  # - `failed` (`keep_notable`, on for a session with the logger,
+  #   telemetry or otel component): a traced event with severity `error`
+  #   or `critical` (an exception, a 5xx, a failed span, GraphQL errors, a
+  #   Logger error);
+  # - `slow` (`keep_notable`): a traced Telemetry event whose `duration`
+  #   or `total_time` measurement, or an OpenTelemetry span whose
+  #   `duration_us`, is at least @slow_us.
+  #
+  # So `trace` finds the request a reader just reproduced without
+  # `--retain-traces`. A kept trace takes the strongest reason it has seen
+  # (mutation, then failed, then slow) and moves to that pool. Its events
+  # before the one that made it notable come from a lookback of the last
+  # @max_lookback traced events (and @max_lookback_bytes, the store's own
+  # bounds, so a large request survives until its stop or error arrives)
+  # the sweep saw, and of the automatic traces `retain_traces` let go;
+  # those that fell out of it count as the trace's `lost`. Those counters
+  # are kept for the @max_rolled traces updated last; past that the least
+  # recently updated goes, counted as `loss_counters_evicted` (that
+  # trace's later loss is then unknown). Default retention never costs
+  # what `--retain` and `retain_traces` keep: with `retain_traces`, a new
+  # trace joins the automatic pool even when its first event is notable,
+  # and an automatic trace that is notable stays automatic until the pool
+  # lets it go, and only then takes its reason; past the store's bounds
+  # default traces go first.
   #
   # Bounded at @max_entries events and @max_bytes of external term size in
-  # all. Past a bound the least recently active automatic trace goes first,
-  # then the oldest mutation trace, then the oldest events of the oldest
-  # explicit pin. Every loss is counted:
+  # all, plus the lookback's own bounds. Past a bound the least recently
+  # active slow trace goes first, then failed, then mutation traces, then
+  # the least recently active automatic trace, then the oldest events of
+  # the oldest explicit pin. Every loss is counted:
   # `evicted_traces` and `dropped_events` in all, and per kept trace `lost`
   # (its events dropped here) and `missed_receipts` (receipts the Recorder
   # evicted before a sweep read them while the trace was kept, which may or
@@ -46,10 +63,16 @@ defmodule Insider.Live.Retention do
   @max_entries 4_096
   @max_bytes 4 * 1_024 * 1_024
   @max_hinted 256
-  @max_mutation_traces 16
-  @max_lookback 1_024
-  @max_lookback_bytes 1_024 * 1_024
+  @max_default_traces 16
+  @max_lookback 4_096
+  @max_lookback_bytes 4 * 1_024 * 1_024
   @max_rolled 2_048
+  @slow_us 500_000
+
+  # Default reasons, weakest first: the order past the store's bounds, and
+  # a kept trace moves only to a stronger one.
+  @defaults [:slow, :failed, :mutation]
+  @failed_severities ["error", "critical"]
 
   defstruct limit: 0,
             traces: %{},
@@ -62,6 +85,7 @@ defmodule Insider.Live.Retention do
             missed: 0,
             hinted: MapSet.new(),
             keep_mutations: false,
+            keep_notable: false,
             lookback: :queue.new(),
             lookback_count: 0,
             lookback_bytes: 0,
@@ -80,8 +104,12 @@ defmodule Insider.Live.Retention do
       "retained_pins_max" => @max_pins,
       "retained_events_max" => @max_entries,
       "retained_bytes_max" => @max_bytes,
-      "mutation_traces_max" => @max_mutation_traces,
-      "mutation_lookback_max" => @max_lookback
+      "mutation_traces_max" => @max_default_traces,
+      "failed_traces_max" => @max_default_traces,
+      "slow_traces_max" => @max_default_traces,
+      "slow_trace_ms" => div(@slow_us, 1_000),
+      "mutation_lookback_max" => @max_lookback,
+      "lookback_bytes_max" => @max_lookback_bytes
     }
 
   @doc "The most traces `retain_traces` keeps."
@@ -97,25 +125,33 @@ defmodule Insider.Live.Retention do
   def start(%__MODULE__{cursor: nil} = retention, cursor), do: %{retention | cursor: cursor}
   def start(retention, _cursor), do: retention
 
-  @doc "Whether the traces of mutation requests are kept; turning it off lets the lookback go."
+  @doc "Whether the traces of mutation requests are kept; with neither default on, the lookback goes."
   @spec keep_mutations(t(), boolean()) :: t()
-  def keep_mutations(retention, true), do: %{retention | keep_mutations: true}
+  def keep_mutations(retention, on?), do: forget_lookback(%{retention | keep_mutations: on?})
 
-  def keep_mutations(retention, false),
-    do: %{
-      retention
-      | keep_mutations: false,
-        lookback: :queue.new(),
-        lookback_count: 0,
-        lookback_bytes: 0,
-        rolled: %{},
-        rolled_order: :queue.new()
-    }
+  @doc "Whether failed and slow traces are kept; with neither default on, the lookback goes."
+  @spec keep_notable(t(), boolean()) :: t()
+  def keep_notable(retention, on?), do: forget_lookback(%{retention | keep_notable: on?})
+
+  defp forget_lookback(retention) do
+    if defaults?(retention),
+      do: retention,
+      else: %{
+        retention
+        | lookback: :queue.new(),
+          lookback_count: 0,
+          lookback_bytes: 0,
+          rolled: %{},
+          rolled_order: :queue.new()
+      }
+  end
+
+  defp defaults?(retention), do: retention.keep_mutations or retention.keep_notable
 
   @doc "Whether the owner should sweep: it keeps traces or retains new ones."
   @spec active?(t() | nil) :: boolean()
   def active?(%__MODULE__{cursor: cursor} = retention) when is_integer(cursor),
-    do: retention.limit > 0 or retention.traces != %{} or retention.keep_mutations
+    do: retention.limit > 0 or retention.traces != %{} or defaults?(retention)
 
   def active?(_retention), do: false
 
@@ -168,31 +204,31 @@ defmodule Insider.Live.Retention do
         retention
 
       trace_id ->
-        mutation? = retention.keep_mutations and mutation_stop?(entry["event"])
+        reason = reason(retention, entry["event"])
 
         cond do
           Map.has_key?(retention.traces, trace_id) ->
             retention
             |> append(trace_id, [entry])
             |> touch(trace_id)
-            |> then(&if(mutation?, do: mark_mutation(&1, trace_id), else: &1))
+            |> mark(trace_id, reason)
             |> bound()
 
-          mutation? ->
-            {earlier, retention} = take_lookback(retention, trace_id)
-            {{lost, _sequence}, rolled} = Map.pop(retention.rolled, trace_id, {0, nil})
-
-            %{retention | rolled: rolled}
-            |> add(trace_id, :mutation)
-            |> update_in([Access.key(:traces), trace_id, :lost], &(&1 + lost))
-            |> append(trace_id, earlier ++ [entry])
-            |> trim_mutations()
-            |> bound()
-
+          # With `retain_traces`, a new trace joins the automatic pool even
+          # when its first event is notable; it remembers the reason and
+          # takes it when the pool lets it go, so the default never costs
+          # what `retain_traces` keeps.
           retention.limit > 0 ->
-            retention |> add(trace_id, :auto) |> append(trace_id, [entry]) |> trim() |> bound()
+            retention
+            |> admit(trace_id, :auto, reason, entry)
+            |> mark(trace_id, reason)
+            |> trim()
+            |> bound()
 
-          retention.keep_mutations ->
+          reason != nil ->
+            retention |> admit(trace_id, reason, reason, entry) |> trim_pool(reason) |> bound()
+
+          defaults?(retention) ->
             remember(retention, trace_id, entry)
 
           true ->
@@ -200,6 +236,34 @@ defmodule Insider.Live.Retention do
         end
     end
   end
+
+  # A new kept trace. A notable one takes its earlier events from the
+  # lookback, and what fell out of it as `lost`.
+  defp admit(retention, trace_id, pin, nil, entry),
+    do: retention |> add(trace_id, pin) |> append(trace_id, [entry])
+
+  defp admit(retention, trace_id, pin, _reason, entry) do
+    {earlier, retention} = take_lookback(retention, trace_id)
+    {{lost, _sequence}, rolled} = Map.pop(retention.rolled, trace_id, {0, nil})
+
+    %{retention | rolled: rolled}
+    |> add(trace_id, pin)
+    |> update_in([Access.key(:traces), trace_id, :lost], &(&1 + lost))
+    |> append(trace_id, earlier ++ [entry])
+  end
+
+  # The strongest default reason `event` gives to keep its trace, or `nil`.
+  defp reason(retention, event) do
+    cond do
+      retention.keep_mutations and mutation_stop?(event) -> :mutation
+      retention.keep_notable and event["severity"] in @failed_severities -> :failed
+      retention.keep_notable and slow?(event) -> :slow
+      true -> nil
+    end
+  end
+
+  defp enabled?(retention, :mutation), do: retention.keep_mutations
+  defp enabled?(retention, _notable), do: retention.keep_notable
 
   defp mutation_stop?(%{
          "source" => "telemetry",
@@ -210,10 +274,45 @@ defmodule Insider.Live.Retention do
 
   defp mutation_stop?(_event), do: false
 
-  # An automatic trace that runs a mutation stays automatic; when the pool
-  # lets it go it becomes a mutation trace (`trim/1`).
-  defp mark_mutation(retention, trace_id),
-    do: put_in(retention, [Access.key(:traces), trace_id, :mutation], true)
+  # A span's duration is in microseconds; a Telemetry time measurement is
+  # in native units, and retention runs on the node that recorded it.
+  defp slow?(%{"source" => "otel", "attributes" => %{"duration_us" => us}}) when is_integer(us),
+    do: us >= @slow_us
+
+  defp slow?(%{"source" => "telemetry", "attributes" => %{"measurements" => %{} = measurements}}) do
+    Enum.any?(["duration", "total_time"], fn name ->
+      case measurements[name] do
+        native when is_integer(native) ->
+          System.convert_time_unit(native, :native, :microsecond) >= @slow_us
+
+        _other ->
+          false
+      end
+    end)
+  end
+
+  defp slow?(_event), do: false
+
+  defp rank(reason), do: Enum.find_index(@defaults, &(&1 == reason))
+
+  defp stronger(nil, reason), do: reason
+  defp stronger(a, b), do: if(rank(b) > rank(a), do: b, else: a)
+
+  # A kept trace remembers the strongest reason it has seen. An automatic
+  # or explicit one keeps its pin, and takes that reason when the pool lets
+  # it go (`trim/1`); a default one moves to the stronger reason's pool.
+  defp mark(retention, _trace_id, nil), do: retention
+
+  defp mark(retention, trace_id, reason) do
+    trace = retention.traces[trace_id]
+    notable = stronger(trace.notable, reason)
+    retention = put_in(retention, [Access.key(:traces), trace_id, :notable], notable)
+
+    if trace.pin in @defaults and trace.pin != notable,
+      do:
+        retention |> put_in([Access.key(:traces), trace_id, :pin], notable) |> trim_pool(notable),
+      else: retention
+  end
 
   # The lookback: the last traced events of traces not (yet) kept.
   defp remember(retention, trace_id, entry) do
@@ -311,11 +410,12 @@ defmodule Insider.Live.Retention do
      }}
   end
 
-  # Mutation traces beyond @max_mutation_traces go, least recently active first.
-  defp trim_mutations(retention) do
-    mutations = Enum.filter(retention.order, &(retention.traces[&1].pin == :mutation))
-    excess = length(mutations) - @max_mutation_traces
-    mutations |> Enum.take(max(excess, 0)) |> Enum.reduce(retention, &drop_trace(&2, &1))
+  # A default reason's traces beyond @max_default_traces go, least recently
+  # active first; each reason has its own pool.
+  defp trim_pool(retention, reason) do
+    kept = Enum.filter(retention.order, &(retention.traces[&1].pin == reason))
+    excess = length(kept) - @max_default_traces
+    kept |> Enum.take(max(excess, 0)) |> Enum.reduce(retention, &drop_trace(&2, &1))
   end
 
   @doc """
@@ -384,7 +484,10 @@ defmodule Insider.Live.Retention do
       "traces" => map_size(retention.traces),
       "pinned" => for({id, %{pin: :explicit}} <- retention.traces, do: id) |> Enum.sort(),
       "keep_mutations" => retention.keep_mutations,
-      "mutation_traces" => Enum.count(retention.traces, fn {_id, t} -> t.pin == :mutation end),
+      "keep_failed_and_slow" => retention.keep_notable,
+      "mutation_traces" => kept(retention, :mutation),
+      "failed_traces" => kept(retention, :failed),
+      "slow_traces" => kept(retention, :slow),
       "loss_counters_evicted" => retention.loss_counters_evicted,
       "events" => retention.count,
       "bytes" => retention.bytes,
@@ -394,6 +497,8 @@ defmodule Insider.Live.Retention do
       "swept_through" => retention.cursor
     })
   end
+
+  defp kept(retention, pin), do: Enum.count(retention.traces, fn {_id, t} -> t.pin == pin end)
 
   @doc "Whether this is the first eviction hint for `trace_id`, and marks it."
   @spec hint(t(), String.t()) :: {boolean(), t()}
@@ -420,7 +525,7 @@ defmodule Insider.Live.Retention do
       lost: 0,
       missed: 0,
       since: retention.cursor,
-      mutation: pin == :mutation
+      notable: if(pin in @defaults, do: pin)
     }
 
     %{
@@ -468,23 +573,25 @@ defmodule Insider.Live.Retention do
   end
 
   # Automatic traces beyond the limit go, least recently active first. One
-  # that ran a mutation becomes a mutation trace; while mutation traces are
-  # kept, another's events go to the lookback, where a later mutation stop
-  # of its trace finds them.
+  # that turned notable (ran a mutation, failed, or was slow) becomes a
+  # trace kept by default for its strongest reason; while a default is on,
+  # another's events go to the lookback, where a later notable event of
+  # its trace finds them.
   defp trim(retention) do
     autos = Enum.filter(retention.order, &(retention.traces[&1].pin == :auto))
     excess = length(autos) - retention.limit
-    autos |> Enum.take(max(excess, 0)) |> Enum.reduce(retention, &let_go/2) |> trim_mutations()
+    retention = autos |> Enum.take(max(excess, 0)) |> Enum.reduce(retention, &let_go/2)
+    Enum.reduce(@defaults, retention, &trim_pool(&2, &1))
   end
 
   defp let_go(trace_id, retention) do
     trace = retention.traces[trace_id]
 
     cond do
-      trace.mutation and retention.keep_mutations ->
-        put_in(retention, [Access.key(:traces), trace_id, :pin], :mutation)
+      trace.notable != nil and enabled?(retention, trace.notable) ->
+        put_in(retention, [Access.key(:traces), trace_id, :pin], trace.notable)
 
-      retention.keep_mutations ->
+      defaults?(retention) ->
         retention = drop_trace(retention, trace_id)
 
         trace.entries
@@ -500,13 +607,16 @@ defmodule Insider.Live.Retention do
        when count <= @max_entries and bytes <= @max_bytes,
        do: retention
 
-  # Mutation traces (the default) go first, so they never cost what
-  # `--retain-traces` and `--retain` keep.
+  # Default traces go first, weakest reason first (slow, failed, then
+  # mutation), so they never cost what `--retain-traces` and `--retain`
+  # keep; then automatic traces.
   defp bound(retention) do
-    auto = Enum.find(retention.order, &(retention.traces[&1].pin == :auto))
-    mutation = Enum.find(retention.order, &(retention.traces[&1].pin == :mutation))
+    victim =
+      Enum.find_value(@defaults ++ [:auto], fn pin ->
+        Enum.find(retention.order, &(retention.traces[&1].pin == pin))
+      end)
 
-    case mutation || auto do
+    case victim do
       nil -> retention |> drop_oldest_event() |> bound()
       trace_id -> retention |> drop_trace(trace_id) |> bound()
     end

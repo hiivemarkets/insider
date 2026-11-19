@@ -14,6 +14,7 @@ defmodule Insider.Lab.Live.CLI do
   alias Insider.Lab.Live.Format
   alias Insider.Lab.Live.Help
   alias Insider.Lab.Live.Installation
+  alias Insider.Lab.Live.Invocation
   alias Insider.Lab.Live.Observer
   alias Insider.Lab.Live.Otlp
   alias Insider.Lab.Live.Reports
@@ -61,7 +62,7 @@ defmodule Insider.Lab.Live.CLI do
     :view_route,
     :view_trace
   ]
-  @view_options @view_repeatable ++ [:view_min_severity, :view_clear]
+  @view_options @view_repeatable ++ [:view_min_severity, :view_clear, :view_keep]
   # Every read names its reader and reads through its view.
   @reading [:reader] ++ @view_options
   # The Poller's options (`Insider.Live.PollerOptions`).
@@ -217,6 +218,7 @@ defmodule Insider.Lab.Live.CLI do
     view_route: [:string, :keep],
     view_trace: [:string, :keep],
     view_clear: [:boolean, :keep],
+    view_keep: [:boolean, :keep],
     disclosure: [:string, :keep],
     poller_interval_ms: [:integer, :keep],
     top_processes: [:integer, :keep],
@@ -261,6 +263,9 @@ defmodule Insider.Lab.Live.CLI do
   @codes Welcome.observer_errors()
   @quick_start_schema Welcome.quick_start_schema()
   @welcome_schemas [Welcome.schema(), Welcome.quick_start_schema()]
+  # Short receipts of an action, which neither carry nor deliver the welcome
+  # quick start: a first command among them leaves it for the next one.
+  @receipts Welcome.observer_receipts()
 
   @doc false
   @spec switches() :: keyword()
@@ -291,18 +296,21 @@ defmodule Insider.Lab.Live.CLI do
   returns the exit status. `--help`, `help OPERATION`, and `OPERATION
   --help` write usage text instead and return `0`.
 
-  Options: `:reports_directory` (default `Reports.default_directory/0`),
-  `:gh` (the `gh` runner, default `Reports.gh/1`), `:submission` (the
-  observer's own `Insider.Live.Report.submission/0` setting), and `:notice`
-  (where `reports submit` prints its effective authorization before its
-  first `gh` call, default standard error).
+  Options: `:invocation` (the command that was run, named in help, usage
+  errors, and the target's commands it prints: `"mix insider.live"`, the
+  default, or `"insider-lab live"`), `:reports_directory` (default
+  `Reports.default_directory/0`), `:gh` (the `gh` runner, default
+  `Reports.gh/1`), `:submission` (the observer's own
+  `Insider.Live.Report.submission/0` setting), and `:notice` (where
+  `reports submit` prints its effective authorization before its first `gh`
+  call, default standard error).
   """
   @spec run([String.t()], (iodata() -> term()), keyword()) :: non_neg_integer()
   def run(arguments, writer, options \\ [])
       when is_list(arguments) and is_function(writer, 1) and is_list(options) do
     environment = environment(options)
 
-    case parse(arguments) do
+    case parse(arguments, environment.invocation) do
       {:ok, command} ->
         execute(Map.put(command, :environment, environment), writer)
 
@@ -311,7 +319,7 @@ defmodule Insider.Lab.Live.CLI do
 
       {:error, code, details} ->
         Reports.remember_local(environment.reports_directory, attempted(arguments), code)
-        emit_failure(writer, code, details)
+        emit_failure(writer, code, details, nil, environment.invocation)
     end
   rescue
     _error -> emit_failure(writer, "observer_failed", %{})
@@ -319,6 +327,7 @@ defmodule Insider.Lab.Live.CLI do
 
   defp environment(options) do
     %{
+      invocation: Keyword.get(options, :invocation, Invocation.default()),
       reports_directory:
         Keyword.get_lazy(options, :reports_directory, &Reports.default_directory/0),
       gh: Keyword.get(options, :gh, &Reports.gh/1),
@@ -335,53 +344,58 @@ defmodule Insider.Lab.Live.CLI do
 
   @doc """
   Parses one observer command line without running it: `{:ok, command}`,
-  `{:help, text}`, or `{:error, code, details}`. The welcome's quick start,
-  recipes, and examples are checked with it.
+  `{:help, text}`, or `{:error, code, details}`. Help and the `help` of an
+  error name `invocation`, the command that was run. The welcome's quick
+  start, recipes, and examples are checked with it.
   """
-  @spec parse([String.t()]) :: {:ok, map()} | {:help, String.t()} | {:error, String.t(), map()}
-  def parse(arguments) when arguments in [["--help"], ["-h"], ["help"]],
-    do: {:help, Help.overview()}
+  @spec parse([String.t()], String.t()) ::
+          {:ok, map()} | {:help, String.t()} | {:error, String.t(), map()}
+  def parse(arguments, invocation \\ Invocation.default())
+
+  def parse(arguments, invocation) when arguments in [["--help"], ["-h"], ["help"]],
+    do: {:help, Help.overview(invocation)}
 
   # `help OPERATION` ignores the target flags a wrapper appends, so
   # `il help trace` is not a usage error.
-  def parse(["help" | operation]),
+  def parse(["help" | operation], invocation),
     do:
       operation
       |> Enum.take_while(&(not String.starts_with?(&1, "-")))
       |> Enum.join(" ")
-      |> help()
+      |> help(invocation)
 
-  def parse(["reports", "submit" | arguments]), do: parse("reports submit", arguments)
+  def parse(["reports", "submit" | arguments], invocation),
+    do: parse_operation("reports submit", arguments, invocation)
 
-  def parse([operation | arguments])
+  def parse([operation | arguments], invocation)
       when is_map_key(@operations, operation) and operation != "reports submit",
-      do: parse(operation, arguments)
+      do: parse_operation(operation, arguments, invocation)
 
-  def parse(_arguments), do: usage()
+  def parse(_arguments, invocation), do: usage(invocation)
 
-  defp help(operation) when is_map_key(@operations, operation),
-    do: {:help, Help.operation(operation)}
+  defp help(operation, invocation) when is_map_key(@operations, operation),
+    do: {:help, Help.operation(operation, invocation)}
 
-  defp help(_operation), do: usage()
+  defp help(_operation, invocation), do: usage(invocation)
 
-  defp usage do
+  defp usage(invocation) do
     {:error, "usage",
      %{
        "operations" => Enum.sort(Map.keys(@operations)),
-       "help" => "#{Help.command()} --help"
+       "help" => "#{invocation} --help"
      }}
   end
 
-  defp parse(operation, arguments) do
+  defp parse_operation(operation, arguments, invocation) do
     {options, positional, invalid} =
       arguments |> optional_values() |> OptionParser.parse(strict: @switches)
 
     if Enum.any?(invalid, fn {flag, _value} -> flag in ["--help", "-h"] end) do
-      {:help, Help.operation(operation)}
+      {:help, Help.operation(operation, invocation)}
     else
       operation
       |> validate(options, positional, invalid)
-      |> explain(operation)
+      |> explain(operation, invocation)
     end
   end
 
@@ -395,6 +409,7 @@ defmodule Insider.Lab.Live.CLI do
          :ok <- present(options, target_required ++ required),
          :ok <- target_complete(options),
          :ok <- single(options),
+         :ok <- view_keep(options),
          {:ok, timeout_ms} <- timeout(options),
          {:ok, target} <- target(options),
          {:ok, arguments} <- operation_arguments(operation, options) do
@@ -426,15 +441,15 @@ defmodule Insider.Lab.Live.CLI do
   defp invalid(flag, problem, extra \\ %{}),
     do: {:error, "invalid_options", Map.merge(extra, %{"option" => flag, "problem" => problem})}
 
-  defp explain({:error, "invalid_options", details}, operation) do
+  defp explain({:error, "invalid_options", details}, operation, invocation) do
     {:error, "invalid_options",
      Map.merge(details, %{
        "expected" => expected(operation, details),
-       "help" => "#{Help.command()} help #{operation}"
+       "help" => "#{invocation} help #{operation}"
      })}
   end
 
-  defp explain(result, _operation), do: result
+  defp explain(result, _operation, _invocation), do: result
 
   defp expected(operation, %{"problem" => problem} = details)
        when problem in ["unknown", "not_accepted", "positional_argument"] do
@@ -1112,24 +1127,53 @@ defmodule Insider.Lab.Live.CLI do
     end)
   end
 
-  # A read-time view, for every read. Without view flags, a named reader
-  # reads through its own view; `--view-clear` (alone) clears it.
+  # A read-time view, for every read: it narrows only this read. Without
+  # view flags, a named reader reads through its stored view; `--view-keep`
+  # makes the view given the stored view, and so does `--view-clear` with
+  # other view flags (it replaces the stored view with them), while
+  # `--view-clear` alone clears it.
   defp put_view(map, options) do
-    view =
-      %{}
-      |> put_list("sources", Keyword.get_values(options, :view_source))
-      |> put_list("kinds", Keyword.get_values(options, :view_kind))
-      |> put_list("exclude_kinds", Keyword.get_values(options, :view_exclude_kind))
-      |> put_value("min_severity", Keyword.get(options, :view_min_severity))
-      |> put_list("exclude_signatures", Keyword.get_values(options, :view_exclude_signature))
-      |> put_list("services", Keyword.get_values(options, :view_service))
-      |> put_list("routes", Keyword.get_values(options, :view_route))
-      |> put_list("traces", Keyword.get_values(options, :view_trace))
+    view = view(options)
+    clear? = Keyword.get(options, :view_clear, false)
+
+    keep? =
+      Keyword.get(options, :view_keep, false) or (clear? and Keyword.has_key?(options, :reader))
 
     cond do
+      view != %{} and keep? -> Map.merge(map, %{"view" => view, "view_keep" => true})
       view != %{} -> Map.put(map, "view", view)
-      Keyword.get(options, :view_clear, false) -> Map.put(map, "view", %{})
+      clear? -> Map.put(map, "view", %{})
       true -> map
+    end
+  end
+
+  defp view(options) do
+    %{}
+    |> put_list("sources", Keyword.get_values(options, :view_source))
+    |> put_list("kinds", Keyword.get_values(options, :view_kind))
+    |> put_list("exclude_kinds", Keyword.get_values(options, :view_exclude_kind))
+    |> put_value("min_severity", Keyword.get(options, :view_min_severity))
+    |> put_list("exclude_signatures", Keyword.get_values(options, :view_exclude_signature))
+    |> put_list("services", Keyword.get_values(options, :view_service))
+    |> put_list("routes", Keyword.get_values(options, :view_route))
+    |> put_list("traces", Keyword.get_values(options, :view_trace))
+  end
+
+  # `--view-keep` keeps a view for a reader: it needs both.
+  defp view_keep(options) do
+    cond do
+      not Keyword.get(options, :view_keep, false) ->
+        :ok
+
+      view(options) == %{} ->
+        missing = Enum.map(@view_options -- [:view_clear, :view_keep], &option_name/1)
+        invalid("--view-keep", "missing", %{"missing" => missing})
+
+      not Keyword.has_key?(options, :reader) ->
+        invalid("--view-keep", "missing", %{"missing" => ["--reader"]})
+
+      true ->
+        :ok
     end
   end
 
@@ -1298,6 +1342,7 @@ defmodule Insider.Lab.Live.CLI do
          {:ok, command} <- active_session(node, command) do
       command = %{command | incarnation: incarnation(node, command.timeout_ms)}
       command = %{command | welcome: connection_welcome(node, command)}
+      installation = Installation.for_operation(installation, command.operation)
       {:observed, perform(node, command, installation, writer), command}
     end
   end
@@ -1319,7 +1364,7 @@ defmodule Insider.Lab.Live.CLI do
            "expected" =>
              "SESSION_ID: no session is active on the node, so there is none to default to; " <>
                "start one with start, or name a stopped one with --session",
-           "help" => "#{Help.command()} help #{command.operation}"
+           "help" => "#{command.environment.invocation} help #{command.operation}"
          }}
 
       {:ok, %{} = capabilities} ->
@@ -1351,12 +1396,16 @@ defmodule Insider.Lab.Live.CLI do
     end
   end
 
-  # The first command run against a target node carries the target's
-  # welcome quick start under `"welcome"`, inside the one JSON document the
-  # command prints; later ones carry a pointer with the hash that was
-  # delivered. `welcome` itself needs neither. If the document cannot be
-  # read, the pointer still says how to read it.
-  defp connection_welcome(_node, %{operation: "welcome"}), do: nil
+  # The first command run against a target node that is not a receipt (nor
+  # `welcome` itself, which needs none) carries the target's welcome quick
+  # start under `"welcome"`, inside the one JSON document the command prints.
+  # Once it was delivered, only `capabilities`, the discovery command, carries
+  # a pointer with the hash that was delivered; other commands carry nothing.
+  # If the document cannot be read, or the delivery cannot be recorded, the
+  # pointer still says how to read it.
+  defp connection_welcome(_node, %{operation: operation})
+       when operation == "welcome" or operation in @receipts,
+       do: nil
 
   defp connection_welcome(node, %{incarnation: creation} = command) when is_integer(creation) do
     directory = command.environment.reports_directory
@@ -1367,11 +1416,17 @@ defmodule Insider.Lab.Live.CLI do
            Observer.call(node, Insider.Live, :welcome, [], command.timeout_ms) do
       {:document, welcome}
     else
-      delivered -> {:pointer, welcome_pointer(delivered)}
+      delivered when is_binary(delivered) -> delivered_welcome(command, delivered)
+      _unreadable -> {:pointer, welcome_pointer(nil)}
     end
   end
 
   defp connection_welcome(_node, _command), do: {:pointer, welcome_pointer(nil)}
+
+  defp delivered_welcome(%{operation: "capabilities"}, delivered),
+    do: {:pointer, welcome_pointer(delivered)}
+
+  defp delivered_welcome(_command, _delivered), do: nil
 
   defp welcome_pointer(delivered) do
     hash = if is_binary(delivered), do: delivered
@@ -1715,7 +1770,7 @@ defmodule Insider.Lab.Live.CLI do
   defp finish({:done, document}, command, writer) do
     remember(command, nil, document["result"])
 
-    case Format.render(command.operation, command.arguments, document) do
+    case formatted(command, document) do
       {:json, document} -> emit_document(writer, document, 0, command)
       {:text, text} -> emit_text(writer, text)
     end
@@ -1741,6 +1796,7 @@ defmodule Insider.Lab.Live.CLI do
         command
       )
 
+    document = Invocation.document(document, command.environment.invocation)
     emit_document(writer, document, @exit_statuses["error"], command)
   end
 
@@ -1750,7 +1806,7 @@ defmodule Insider.Lab.Live.CLI do
   # A watch line in the command's `--format`. Only JSON carries the welcome,
   # so only JSON output records its delivery.
   defp render(writer, command, document) do
-    case Format.render(command.operation, command.arguments, document) do
+    case formatted(command, document) do
       {:json, document} ->
         with :ok <- emit(writer, document) do
           mark_welcomed(document, command)
@@ -1760,6 +1816,14 @@ defmodule Insider.Lab.Live.CLI do
       {:text, text} ->
         write(writer, text)
     end
+  end
+
+  # The document with the target's commands in the form the observer was run
+  # with (`Invocation.document/2`), in the command's `--format`.
+  defp formatted(command, document) do
+    invocation = command.environment.invocation
+    arguments = Map.put(command.arguments, :invocation, invocation)
+    Format.render(command.operation, arguments, Invocation.document(document, invocation))
   end
 
   defp emit_text(writer, text) do
@@ -1881,14 +1945,19 @@ defmodule Insider.Lab.Live.CLI do
     end
   end
 
-  defp emit_failure(writer, code, details, command \\ nil) do
+  # An observer error's message is the welcome's text for its code, with its
+  # commands in the form the observer was run with: the command's, or
+  # `invocation` when no command was parsed.
+  defp emit_failure(writer, code, details, command \\ nil, invocation \\ nil) do
     if command, do: remember(command, code, nil)
     {status, _message} = Map.fetch!(@codes, code)
-    emit(writer, failure_document(code, details, command), Map.fetch!(@exit_statuses, status))
+    document = failure_document(code, details, command, invocation)
+    emit(writer, document, Map.fetch!(@exit_statuses, status))
   end
 
-  defp failure_document(code, details, command) do
+  defp failure_document(code, details, command, invocation \\ nil) do
     {status, message} = Map.fetch!(@codes, code)
+    invocation = invocation || get_in(command || %{}, [:environment, :invocation])
 
     put_command(
       %{
@@ -1897,7 +1966,7 @@ defmodule Insider.Lab.Live.CLI do
         "error" => %{
           "source" => "observer",
           "code" => code,
-          "message" => message,
+          "message" => Invocation.rewrite(message, invocation || Invocation.default()),
           "details" => details
         }
       },
