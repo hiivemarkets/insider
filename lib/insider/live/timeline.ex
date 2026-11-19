@@ -30,6 +30,8 @@ defmodule Insider.Live.Timeline do
   @slack_us 1_000
   @wait_shown_us 100_000
   @missing_max 16
+  @narrow_trace "hide or fold categories with --hide or --collapse"
+  @narrow_timeline "start later with --since, or keep less with a --view-* flag"
 
   @doc "The slack after a span's end within which an event still joins it."
   @spec slack_us() :: pos_integer()
@@ -305,7 +307,7 @@ defmodule Insider.Live.Timeline do
       |> Map.merge(scan_report(scan, options))
       |> put_mark(Map.get(options, :mark))
 
-    if Map.get(options, :human), do: Map.put(result, "text", text(result)), else: result
+    if Map.get(options, :human), do: Map.put(result, "text", text(result, options)), else: result
   end
 
   # --- joining ----------------------------------------------------------
@@ -742,7 +744,7 @@ defmodule Insider.Live.Timeline do
 
   # --- text -------------------------------------------------------------
 
-  defp text(%{"subject" => subject} = result) do
+  defp text(%{"subject" => subject} = result, options) do
     start = Enum.find_value(result["items"], & &1["at_us"])
     [{key, value}] = Map.to_list(subject)
 
@@ -761,7 +763,9 @@ defmodule Insider.Live.Timeline do
 
     footer =
       if result["truncated"],
-        do: [more_line(result["omitted_items"], result["truncated_by"])],
+        do: [
+          more_line(result["omitted_items"], result["truncated_by"], options, @narrow_timeline)
+        ],
         else: []
 
     since =
@@ -822,8 +826,8 @@ defmodule Insider.Live.Timeline do
     footer =
       cond do
         more == 0 -> []
-        length(lines) >= options.limit -> [more_line(more, "limit")]
-        true -> [more_line(more, "max_bytes")]
+        length(lines) >= options.limit -> [more_line(more, "limit", options, @narrow_trace)]
+        true -> [more_line(more, "max_bytes", options, @narrow_trace)]
       end
 
     Enum.join(
@@ -1141,15 +1145,30 @@ defmodule Insider.Live.Timeline do
   end
 
   # What a bound cut, and the flag that raises it, so output cut
-  # at a default bound says how to get the rest.
-  defp more_line(more, "limit"),
-    do: "… #{more} more: cut at --limit; raise it (up to #{Options.correlated_bounds().limit})"
+  # at a default bound says how to get the rest. A bound already at its
+  # most cannot be raised, so the line says how to narrow the read instead
+  # (@narrow_trace, @narrow_timeline).
 
-  defp more_line(more, "max_bytes"),
+  defp more_line(more, "limit", options, narrow),
+    do: more_line(more, "--limit", options.limit, Options.correlated_bounds().limit, narrow)
+
+  defp more_line(more, "max_bytes", options, narrow),
     do:
-      "… #{more} more: cut at --max-bytes; raise it (up to #{Options.correlated_bounds().max_bytes})"
+      more_line(
+        more,
+        "--max-bytes",
+        options.max_bytes,
+        Options.correlated_bounds().max_bytes,
+        narrow
+      )
 
-  defp more_line(more, bound), do: "… #{more} more (#{bound})"
+  defp more_line(more, bound, _options, _narrow), do: "… #{more} more (#{bound})"
+
+  defp more_line(more, flag, current, most, _narrow) when current < most,
+    do: "… #{more} more: cut at #{flag}; raise it (up to #{most})"
+
+  defp more_line(more, flag, _current, most, narrow),
+    do: "… #{more} more: cut at #{flag}, already its most (#{most}); #{narrow}"
 
   # The read's losses and an unfinished scan, which `--human` would
   # otherwise hide: they come before any item and outside the line bound.

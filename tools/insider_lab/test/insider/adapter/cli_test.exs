@@ -180,6 +180,23 @@ defmodule Insider.Adapter.CLITest do
     end
   end
 
+  test "--version and -v print the insider_lab and insider versions and exit 0" do
+    lab = Mix.Project.config()[:version]
+    insider = :insider |> Application.spec(:vsn) |> List.to_string()
+
+    for arguments <- [["--version"], ["-v"]] do
+      assert {"insider_lab " <> ^lab <> "\ninsider " <> ^insider <> "\n", 0} =
+               CLI.run_once(arguments, fn _maximum -> flunk("--version reads no input") end)
+    end
+
+    # The Lab releases at the core's version.
+    assert lab == insider
+
+    assert {help, 0} = CLI.run_once(["--help"], fn _maximum -> :eof end)
+    assert help =~ "insider-lab --version"
+    assert help =~ "-v is the same"
+  end
+
   test "an unknown command is a usage error that names --help" do
     for arguments <- [["frobnicate"], ["--frobnicate"], ["--json", "extra"]] do
       assert {usage, 64} = CLI.run_once(arguments, fn _maximum -> :eof end)
@@ -557,6 +574,12 @@ defmodule Insider.Adapter.CLITest do
 
     {usage, "", 64} = cli(context, ["frobnicate"])
     assert Jason.decode!(usage)["help"] == "insider-lab --help"
+
+    # The escript carries both applications, so it knows both versions.
+    version = Mix.Project.config()[:version]
+    {printed, "", 0} = cli(context, ["--version"])
+    assert printed == "insider_lab #{version}\ninsider #{version}\n"
+    assert {^printed, "", 0} = cli(context, ["-v"])
 
     {live, "", 0} = cli(context, ["live", "--help"])
     assert live =~ "insider-lab live: observe a running BEAM node"

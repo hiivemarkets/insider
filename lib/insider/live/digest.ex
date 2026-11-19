@@ -467,10 +467,10 @@ defmodule Insider.Live.Digest do
     }
 
     hints = if context, do: Hints.digest(digest, acc.evidence, context), else: []
+    # The eviction anomaly takes its advice from the hints.
+    digest = put_hints(digest, hints)
 
-    digest
-    |> put_hints(hints)
-    |> Map.put("anomalies", Anomalies.of(digest))
+    Map.put(digest, "anomalies", Anomalies.of(digest))
   end
 
   @doc """

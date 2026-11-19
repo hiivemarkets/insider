@@ -7,6 +7,59 @@ and releases follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-19
+
+A patch release for a busy session: eviction advice never suggests a
+Recorder size you already have, the escript prints its version, and the
+bounds of every start and amend flag are in the help.
+
+### Fixed
+
+- The digest's `evicted` anomaly no longer always suggests
+  `amend --max-events 4096`. At 4096, the default and the most, following
+  it changed nothing. The anomaly now follows the digest's hints: it offers
+  a larger Recorder only while the session's is below its bound (and the
+  value is always larger than the session's and never above 4096); at the
+  bound it says so and gives the amendment that records less of the source
+  that evicted most, naming its family, such as
+  `summarise the Telemetry event my_app.repo.query (6 in this window)`.
+  Without the session's configuration it points at `status`, never at a
+  Recorder size.
+- A flood the Recorder cannot outgrow now has a `record_less` hint: when
+  `max_events` is already 4096, or the flood is over a byte share, it says
+  a larger Recorder is not possible, names the family that evicted most
+  (`evidence.dominant`: a Telemetry kind, span name, or Logger origin, with
+  its count), and lists the flags that record less (`--telemetry-summary`,
+  `--logger-summary`, `--telemetry-min-duration-ms`,
+  `--otel-min-duration-ms`, a narrower `--telemetry-event` list or fewer
+  components, `--exclude-origin`) and how to keep the request that matters
+  (`--retain-traces N` or `trace --retain` before reproducing it, or a
+  `mark` and `digest --since-mark`). The Logger reports hint says the
+  Recorder is at its most instead of only "at its event bound".
+- A span flood with the `otel` component now has a `reduce_otel` hint: a
+  higher `--otel-min-duration-ms` (10 ms from 0, else twice the current
+  value, up to 3,600,000), naming the span recorded most in the window.
+  Before, an OpenTelemetry flood had no hint of its own.
+- `trace --human` and `timeline --human` no longer say "raise it (up to
+  N)" when the cut `--limit` or `--max-bytes` is already N; they say it is
+  at its most and how to narrow the read. `watch` no longer suggests a
+  larger `--max-events` after one of 1,000,000, the most.
+
+### Added
+
+- `insider-lab --version` (and `-v`) prints the escript's `insider_lab`
+  version and the version of the `insider` library it carries, and exits 0.
+  `insider-lab --help` lists it.
+- `insider-lab live --help` (and `mix insider.live --help`) lists the bounds
+  of every bounded start and amend flag (`--lease-ms` 1,000 to 900,000,
+  `--max-events` 16 to 4,096, `--retain-traces` 0 to 64, and the filter,
+  Poller and call-trace flags) and of the read flags of `events`, `trace`
+  and `timeline`, read from the same tables the target validates with.
+  The welcome quick start's start step states the `--lease-ms`,
+  `--max-events` and `--retain-traces` bounds and that 4096 is the
+  Recorder's most, and the start and amend reference has a bounds table.
+  Before, these maximums were only in the error for a value past them.
+
 ## [0.1.3] - 2026-11-18
 
 A patch release for a first session with the observer: a reproduced

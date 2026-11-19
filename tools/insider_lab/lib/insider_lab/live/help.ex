@@ -4,7 +4,8 @@ defmodule Insider.Lab.Live.Help do
   # The observer's usage text (`--help`, `help OPERATION`, and `OPERATION
   # --help`), built from the welcome document's own tables: the quick start,
   # the observer commands with their summaries and examples, and each flag's
-  # value syntax. Each text names the command it was run with (`invocation`:
+  # value syntax, with the ranges of bounded flags from the same option
+  # tables the target validates with. Each text names the command it was run with (`invocation`:
   # `mix insider.live` or `insider-lab live`), and the welcome's commands are
   # rewritten to it (`Insider.Lab.Live.Invocation`); the sentence on running
   # the Mix task in a checkout always names the Mix task. It needs no target,
@@ -15,7 +16,7 @@ defmodule Insider.Lab.Live.Help do
 
   @mix_task "mix insider.live"
 
-  @doc "The overview: usage, the quick start, the operations, the target flags, and the tools to pair with."
+  @doc "The overview: usage, the quick start, the operations, the target flags, the limits of start, amend and reads, and the tools to pair with."
   @spec overview(String.t()) :: String.t()
   def overview(invocation) do
     contract = Welcome.contract()
@@ -44,6 +45,13 @@ defmodule Insider.Lab.Live.Help do
         Enum.map(commands, &"  #{String.pad_trailing(&1["name"], width)}  #{&1["summary"]}") ++
         ["", "Target flags (\"${N[@]}\"):"] ++
         flags("capabilities", Welcome.observer_target_flags()) ++
+        [
+          "",
+          "Limits of start and amend (the target refuses a value outside them; help start says what each sets):"
+        ] ++
+        flags("start", bounded("start")) ++
+        ["", "Limits of reads:"] ++
+        read_limits(["events", "trace", "timeline"]) ++
         ["", "Pairs well with:"] ++
         Enum.map(pairs, &"  #{String.pad_trailing(&1["tool"], pair_width)}  #{&1["use_for"]}") ++
         [
@@ -111,6 +119,28 @@ defmodule Insider.Lab.Live.Help do
   defp flags(operation, flags) do
     width = flags |> Enum.map(&String.length/1) |> Enum.max(fn -> 0 end)
     Enum.map(flags, &"  #{String.pad_trailing(&1, width)}  #{value(operation, &1)}")
+  end
+
+  # The flags of `operation` whose values carry a range (`MIN..MAX`), read
+  # from the option tables the target's validator checks
+  # (`Insider.Live.Options`): integer flags, and `KIND=MS` pairs whose
+  # milliseconds are bounded.
+  defp bounded(operation) do
+    command = Enum.find(Welcome.observer_commands(), &(&1["name"] == operation))
+
+    Enum.filter(
+      command["required"] ++ command["optional"],
+      &Regex.match?(~r/\d+\.\.\d+/, value(operation, &1))
+    )
+  end
+
+  defp read_limits(operations) do
+    rows = for operation <- operations, flag <- bounded(operation), do: {operation, flag}
+    width = rows |> Enum.map(fn {o, f} -> String.length("#{o} #{f}") end) |> Enum.max(fn -> 0 end)
+
+    Enum.map(rows, fn {operation, flag} ->
+      "  #{String.pad_trailing("#{operation} #{flag}", width)}  #{value(operation, flag)}"
+    end)
   end
 
   defp section(_title, []), do: []

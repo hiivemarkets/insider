@@ -624,6 +624,31 @@ defmodule Insider.Live.TimelineTest do
       refute Timeline.trace(complete, options(%{human: true}))["text"] =~ ~r/Lost|Incomplete/
     end
 
+    test "a cut at a bound already at its most says to narrow the read, not to raise it" do
+      pid = "<0.5.0>"
+      most = Insider.Live.Options.correlated_bounds().limit
+
+      events =
+        for receipt <- 1..(most + 1),
+            do: entry(receipt, log_event(nil, pid, 1_000_000 + receipt))
+
+      scan = "live-1" |> Timeline.scan() |> Timeline.add(batch(0, most + 1, events))
+
+      bytes = Insider.Live.Options.correlated_bounds().max_bytes
+
+      at_most =
+        Timeline.timeline(scan, options(%{pid: pid, human: true, limit: most, max_bytes: bytes}))
+
+      footer = at_most["text"] |> String.split("\n") |> List.last()
+
+      assert footer ==
+               "… 1 more: cut at --limit, already its most (#{most}); " <>
+                 "start later with --since, or keep less with a --view-* flag"
+
+      below = Timeline.timeline(scan, options(%{pid: pid, human: true, limit: 10}))
+      assert below["text"] |> String.split("\n") |> List.last() =~ "raise it (up to #{most})"
+    end
+
     test "the text of a timeline renders partial events and says what a limit left out" do
       pid = "<0.5.0>"
       subject = %{"namespace" => "process", "scope" => "n@h", "value" => pid}

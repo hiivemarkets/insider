@@ -102,7 +102,11 @@ defmodule Insider.Live.AnomaliesTest do
     assert mailbox =~ "Mailbox: Phoenix.CodeReloader.Server holds 120 messages (max 126)"
     assert evicted =~ "Evicted: the Recorder evicted 1058 events in this window"
 
-    assert Enum.find(anomalies, &(&1["kind"] == "evicted"))["command"] =~ "--max-events 4096"
+    # Without the session's hints, it never names a Recorder size: status
+    # says which source evicts.
+    evicted_command = Enum.find(anomalies, &(&1["kind"] == "evicted"))["command"]
+    refute evicted_command =~ "--max-events"
+    assert evicted_command == "mix insider.live status \"${N[@]}\" --session live-3"
 
     assert Enum.find(anomalies, &(&1["kind"] == "request_burst"))["command"] =~
              "process \"${N[@]}\" --name Phoenix.CodeReloader.Server"

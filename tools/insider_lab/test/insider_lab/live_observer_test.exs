@@ -883,7 +883,7 @@ defmodule Insider.Lab.LiveObserverTest do
       assert stopped =~ ~r/^# stopped events=2 next_cursor=\d+ reason=max_events$/
 
       assert more =~
-               ~r/^# more: watch stopped at its --max-events; continue with watch --from-cursor \d+ \(and a larger --max-events\), or events --cursor \d+$/
+               ~r/^# more: watch stopped at its --max-events; continue with watch --from-cursor \d+ \(and a larger --max-events, up to 1000000\), or events --cursor \d+$/
 
       refute Enum.any?(rest, &(&1 =~ ~r/^# more: this read/))
     end
@@ -2146,6 +2146,53 @@ defmodule Insider.Lab.LiveObserverTest do
       assert flat =~ "In an Insider checkout: run mix insider.live from tools/insider_lab"
       assert flat =~ "./insider-lab live OPERATION"
       refute flat =~ "Run from tools/insider_lab in the Insider checkout"
+    end
+
+    # The --lease-ms maximum was only in the error an agent got for
+    # passing more.
+    test "--help shows the bounds the target's validator enforces", _context do
+      {0, text} = help(["--help"])
+      [_, limits] = String.split(text, "Limits of start and amend", parts: 2)
+      [start, reads] = String.split(limits, "Limits of reads:\n", parts: 2)
+
+      range = fn section, name ->
+        [_, min, max] =
+          Regex.run(~r/^  #{Regex.escape(name)} +INTEGER (\d+)\.\.(\d+) /m, section) ||
+            flunk("#{name} has no range in --help")
+
+        {String.to_integer(min), String.to_integer(max)}
+      end
+
+      start_with = fn option, value ->
+        Insider.Live.Options.start(%{"components" => ["logger"], option => value})
+      end
+
+      for {flag, option} <- [
+            {"--lease-ms", "lease_ms"},
+            {"--max-events", "max_events"},
+            {"--retain-traces", "retain_traces"}
+          ] do
+        {min, max} = range.(start, flag)
+        assert {:ok, _start} = start_with.(option, min), flag
+        assert {:ok, _start} = start_with.(option, max), flag
+        assert {:error, _refused} = start_with.(option, max + 1), flag
+        if min > 0, do: assert({:error, _refused} = start_with.(option, min - 1), flag)
+      end
+
+      assert range.(start, "--lease-ms") == {1_000, 900_000}
+
+      {min, max} = range.(reads, "events --max-bytes")
+      assert {:ok, _read} = Insider.Live.Options.read(%{"max_bytes" => max})
+      assert {:error, _refused} = Insider.Live.Options.read(%{"max_bytes" => max + 1})
+      assert {:error, _refused} = Insider.Live.Options.read(%{"max_bytes" => min - 1})
+
+      # Every bounded flag start takes, amend takes too, with the same range.
+      assert start =~ "--otel-min-duration-ms"
+      assert start =~ "--poller-interval-ms"
+
+      # A KIND=MS pair's milliseconds are bounded too, by the filter table.
+      most = Insider.Live.Filters.describe_options()["telemetry_event_min_duration_ms"]["max"]
+      assert start =~ ~r/^  --telemetry-event-min-duration +KIND=MS: .*\(0\.\.#{most}\)/m
     end
 
     test "--help names the tools that pair well with Insider, each with its use", _context do

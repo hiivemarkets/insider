@@ -601,6 +601,22 @@ defmodule Insider.Live.WelcomeTest do
       for text <- advice,
           do: assert(text =~ "(events, digest, handoff)", "no evidence warning: " <> text)
     end
+
+    # The --lease-ms maximum was only in the error for a value past it.
+    test "the quick start's start step states the bounds start/1 validates" do
+      [start_step] =
+        Enum.filter(Live.welcome()["quick_start"]["steps"], &String.starts_with?(&1, "4. "))
+
+      for {option, %{"min" => min, "max" => max, "default" => default}} <-
+            Insider.Live.Options.start_bounds() do
+        flag = "--" <> String.replace(option, "_", "-")
+        assert start_step =~ "#{flag} #{min}..#{max} (default #{default})", flag
+        assert {:error, _refused} = Insider.Live.Options.start(%{option => max + 1}), flag
+      end
+
+      assert start_step =~ "--lease-ms 1000..900000"
+      assert start_step =~ "--max-events 4096 is the Recorder's most"
+    end
   end
 
   describe "quick start" do

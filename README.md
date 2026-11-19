@@ -101,7 +101,7 @@ path.
 
 ## Status and safety
 
-- **Early.** Version `0.1.3`. The protocol, APIs and package layout will
+- **Early.** Version `0.1.4`. The protocol, APIs and package layout will
   change.
 - **Dev, test and ci only.** The node's own environment decides, never the
   caller. Live observation is denied in staging and production until separate

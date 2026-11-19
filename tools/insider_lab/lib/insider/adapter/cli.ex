@@ -35,7 +35,8 @@ defmodule Insider.Adapter.CLI do
   @exit_cancelled 130
 
   # The escript's own help: `insider-lab` alone, `--help`, `-h` or `help`.
-  # The observer's help is `insider-lab live --help`.
+  # The observer's help is `insider-lab live --help`. `--version` (or `-v`)
+  # prints the escript's version and the insider library's it carries.
   @help """
   insider-lab: the command-line observer for Insider. It attaches to a running
   BEAM node on this machine over Erlang distribution and reads what the node
@@ -50,6 +51,9 @@ defmodule Insider.Adapter.CLI do
         Read one insider.request/v1 JSON request on stdin and print its result.
     insider-lab --ndjson
         Read one request per line on stdin and print one result per line.
+    insider-lab --version
+        Print this escript's insider_lab version and the version of the
+        insider library it carries (the one --load pushes). -v is the same.
     insider-lab --help
         Print this text.
 
@@ -233,6 +237,9 @@ defmodule Insider.Adapter.CLI do
   def run_once(arguments, _reader) when arguments in [[], ["--help"], ["-h"], ["help"]],
     do: {@help, @exit_ok}
 
+  def run_once(arguments, _reader) when arguments in [["--version"], ["-v"]],
+    do: {"insider_lab #{version(:insider_lab)}\ninsider #{version(:insider)}\n", @exit_ok}
+
   def run_once(["--discover"], _reader) do
     {:ok, bytes} = Wire.encode(discovery())
     {bytes <> "\n", @exit_ok}
@@ -251,6 +258,17 @@ defmodule Insider.Adapter.CLI do
     |> adapter_error()
     |> Map.put("help", "insider-lab --help")
     |> bounded_encode(@exit_input)
+  end
+
+  # An application's version from its loaded spec: the escript carries
+  # both applications' .app files.
+  defp version(application) do
+    _loaded = Application.load(application)
+
+    case Application.spec(application, :vsn) do
+      nil -> "unknown"
+      version -> List.to_string(version)
+    end
   end
 
   defp dispatch(request, dispatcher, projection),
