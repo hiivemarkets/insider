@@ -274,23 +274,51 @@ defmodule Insider.Live.View do
   @doc """
   What a reader's stored view did to a read that gave no view of its own:
   the reader, the stored view's spec, how many events it hid (`nil` when
-  the read does not count them), and a note that names `--view-clear`.
-  `hidden` is a count map (`filtered.view`), a count, or `nil`.
+  the read does not count them), `"source"` `"reader"` (the reader's stored
+  view now), and a note that names `--view-clear`. `hidden` is a count map
+  (`filtered.view`), a count, or `nil`.
   """
   @spec stored(String.t(), map(), map() | non_neg_integer() | nil) :: map()
   def stored(reader, spec, hidden) do
-    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden
+    hidden = sum(hidden)
     effect = if hidden, do: "hid #{hidden} events from this read", else: "narrows this read"
 
     %{
       "reader" => reader,
       "view" => spec,
       "hidden" => hidden,
+      "source" => "reader",
       "note" =>
         "reader #{reader}'s stored view (#{describe_spec(spec)}, kept with --view-keep) #{effect}; " <>
           "--view-clear clears it"
     }
   end
+
+  @doc """
+  The same for a subscription that gave no view of its own: it keeps the
+  stored view it inherited when it subscribed (`"source"`
+  `"subscription_snapshot"`), whatever later happens to the reader's stored
+  view, so its note says that changing it needs a new subscription.
+  """
+  @spec subscription_snapshot(String.t(), map(), map() | non_neg_integer() | nil) :: map()
+  def subscription_snapshot(reader, spec, hidden) do
+    hidden = sum(hidden)
+    effect = if hidden, do: "hid #{hidden} events from this batch", else: "narrows its pushes"
+
+    %{
+      "reader" => reader,
+      "view" => spec,
+      "hidden" => hidden,
+      "source" => "subscription_snapshot",
+      "note" =>
+        "this subscription reads through reader #{reader}'s stored view as it was when it subscribed " <>
+          "(#{describe_spec(spec)}, kept with --view-keep), which #{effect}; it does not follow later " <>
+          "changes to that view: subscribe again to read through another"
+    }
+  end
+
+  defp sum(hidden) when is_map(hidden), do: hidden |> Map.values() |> Enum.sum()
+  defp sum(hidden), do: hidden
 
   @doc """
   Said by a read that kept `spec` (which hid `hidden` events, a count map
@@ -303,7 +331,7 @@ defmodule Insider.Live.View do
   def stored_change_note(reader, nil, _hidden), do: "reader #{reader}'s stored view is cleared"
 
   def stored_change_note(reader, _spec, hidden) do
-    hidden = if is_map(hidden), do: hidden |> Map.values() |> Enum.sum(), else: hidden
+    hidden = sum(hidden)
 
     "this view is now reader #{reader}'s stored view for its later reads (events, watch, digest, trends, " <>
       "trace, timeline, changes, mutations) until --view-clear" <>

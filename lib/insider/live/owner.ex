@@ -2281,7 +2281,9 @@ defmodule Insider.Live.Owner do
     batch = Map.put(batch, "cursor", subscriber.sent_cursor)
 
     # A named subscriber's batches, its last included, say whose they are
-    # and the view they were read through, as a named read's do.
+    # and the view they were read through, as a named read's do. A view it
+    # inherited is the snapshot taken when it subscribed, which later
+    # changes to the reader's stored view do not reach, and it says so.
     batch =
       if subscriber.reader,
         do:
@@ -2290,11 +2292,25 @@ defmodule Insider.Live.Owner do
             "reader" => subscriber.reader,
             "view" => subscriber.view && subscriber.view.spec
           })
-          |> put_stored_view(subscriber.reader, subscriber.view, subscriber.stored),
+          |> put_snapshot_view(subscriber),
         else: batch
 
     {batch, counters, counts, hidden}
   end
+
+  defp put_snapshot_view(batch, %{stored: true} = subscriber),
+    do:
+      Map.put(
+        batch,
+        "stored_view",
+        View.subscription_snapshot(
+          subscriber.reader,
+          subscriber.view.spec,
+          get_in(batch, ["filtered", "view"])
+        )
+      )
+
+  defp put_snapshot_view(batch, _subscriber), do: batch
 
   # A push returns no more events than the subscriber's remaining budget.
   defp push_limits(subscriber) do
@@ -3008,16 +3024,7 @@ defmodule Insider.Live.Owner do
       "max_events" => subscriber && subscriber.remaining,
       "reader" => subscriber && subscriber.reader
     }
-    |> then(fn result ->
-      if subscriber && subscriber.reader && subscriber.stored,
-        do:
-          Map.put(
-            result,
-            "stored_view",
-            View.stored(subscriber.reader, subscriber.view.spec, nil)
-          ),
-        else: result
-    end)
+    |> then(&if(subscriber, do: put_snapshot_view(&1, subscriber), else: &1))
   end
 
   defp expires_at(session) do

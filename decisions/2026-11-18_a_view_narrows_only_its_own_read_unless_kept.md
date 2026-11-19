@@ -16,11 +16,18 @@ It never changes that reader's stored view on its own.
   meaning of that combination.
 - A named read that gives no view applies the reader's stored view, and
   always says so: every result it narrowed carries a top-level
-  `"stored_view"` (`"reader"`, `"view"`, `"hidden"`, `"note"`), and the note
-  is the first line of `--human` text and of compact output. This covers
-  events and pushed batches, digest, trends, trace, timeline, changes,
-  mutations, baseline, and a subscription's reply. A compact `watch` prints
-  the note once, before it subscribes.
+  `"stored_view"` (`"reader"`, `"view"`, `"hidden"`, `"source"`, `"note"`),
+  and the note is the first line of `--human` text and of compact output.
+  This covers events and pushed batches, digest, trends, trace, timeline,
+  changes, mutations, baseline, and a subscription's reply. A compact
+  `watch` prints the note once, before it subscribes.
+- A read's `"source"` is `"reader"`: the reader's stored view as it is now,
+  which `--view-clear` clears. A subscription that gives no view keeps the
+  stored view it inherited when it subscribed, and later changes to the
+  reader's stored view do not reach it. Its reply and pushed batches say
+  `"source": "subscription_snapshot"`, and their note says that it is the
+  view as it was at subscribe time and that another view needs a new
+  subscription, not `--view-clear`.
 - A read that stores or clears the stored view carries `"view_note"`, which
   is also its first line of text. A subscription that stores or clears it
   carries the note in its reply, and a compact `watch` prints it before it

@@ -355,10 +355,17 @@ defmodule Insider.Live.ReaderViewsTest do
     assert {:ok, %{"view" => @warning, "stored_view" => stored}} =
              Live.subscribe(id, self(), %{"reader" => "hunt", "cursor" => 0})
 
-    assert %{"reader" => "hunt", "view" => @warning, "hidden" => nil} = stored
+    assert %{
+             "reader" => "hunt",
+             "view" => @warning,
+             "hidden" => nil,
+             "source" => "subscription_snapshot"
+           } = stored
 
-    assert stored["note"] =~
-             "reader hunt's stored view (min_severity warning, kept with --view-keep) narrows this read"
+    assert stored["note"] ==
+             "this subscription reads through reader hunt's stored view as it was when it subscribed " <>
+               "(min_severity warning, kept with --view-keep), which narrows its pushes; it does not " <>
+               "follow later changes to that view: subscribe again to read through another"
 
     assert_receive {:insider_live_events, ^id,
                     %{"stored_view" => %{"reader" => "hunt"}} = pushed},
@@ -371,6 +378,58 @@ defmodule Insider.Live.ReaderViewsTest do
     assert cleared["view_note"] == "reader hunt's stored view is cleared"
     refute Map.has_key?(cleared, "stored_view")
     assert {:ok, %{"readers" => [%{"name" => "hunt", "view" => nil}]}} = Live.status(id)
+  end
+
+  test "a subscription keeps the stored view it inherited, and its pushes say so after the view changes" do
+    id = start_logged_request()
+
+    assert {:ok, _kept} =
+             Live.events_since(id, 0, %{
+               "reader" => "hunt",
+               "view" => @warning,
+               "view_keep" => true
+             })
+
+    assert {:ok, %{"stored_view" => %{"source" => "subscription_snapshot"}}} =
+             Live.subscribe(id, self(), %{"reader" => "hunt", "cursor" => 0})
+
+    assert_receive {:insider_live_events, ^id, first}, 3_000
+    assert [_warning] = hunt_events(first)
+
+    # The reader's stored view is cleared by a read; the subscription goes on
+    # through the view it inherited, and says that it is that snapshot.
+    assert {:ok, cleared} = Live.events_since(id, 0, %{"reader" => "hunt", "view" => %{}})
+    assert cleared["view_note"] == "reader hunt's stored view is cleared"
+    assert {:ok, %{"readers" => [%{"name" => "hunt", "view" => nil}]}} = Live.status(id)
+
+    capture_log(fn ->
+      Task.await(
+        Task.async(fn ->
+          Logger.metadata(trace_id: @trace_id)
+          Logger.info("hunt request again")
+          Logger.warning("hunt request slow again")
+        end)
+      )
+    end)
+
+    assert_receive {:insider_live_events, ^id, pushed}, 3_000
+    assert [_warning] = hunt_events(pushed)
+    assert pushed["view"] == @warning
+
+    assert %{
+             "reader" => "hunt",
+             "view" => @warning,
+             "hidden" => 1,
+             "source" => "subscription_snapshot",
+             "note" => note
+           } = pushed["stored_view"]
+
+    assert note ==
+             "this subscription reads through reader hunt's stored view as it was when it subscribed " <>
+               "(min_severity warning, kept with --view-keep), which hid 1 events from this batch; it does not " <>
+               "follow later changes to that view: subscribe again to read through another"
+
+    refute note =~ "--view-clear clears it"
   end
 
   # A read's --view-kind silently became the reader's view and hid 1,266

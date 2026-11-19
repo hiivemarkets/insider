@@ -323,7 +323,8 @@ defmodule Insider.Live.Welcome do
       "renews_lease" => false,
       "summary" =>
         "Pushes {:insider_live_events, session_id, batch} to a pid from its cursor (default 0, or \"latest\"), " <>
-          "through the optional view (else the reader's stored view, named in stored_view), until its max_events are sent; " <>
+          "through the optional view (else the reader's stored view as it is when it subscribes, named in stored_view " <>
+          "with source subscription_snapshot), until its max_events are sent; " <>
           "each batch starts where the previous one ended. " <>
           "A reader name marks it subscribed in status. The observer's watch subscribes and renews the lease for you."
     },

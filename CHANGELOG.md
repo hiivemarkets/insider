@@ -36,8 +36,11 @@ every document is shorter.
   and `lookback_bytes_max`.
 - A stored view no longer narrows later reads silently. Every result a
   reader's stored view narrowed carries a top-level `stored_view` (reader,
-  view, events hidden, note), and the note is the first line of `--human`
-  text and of compact output. In 0.1.2 one `--view-min-severity warning` on
+  view, events hidden, source, note), and the note is the first line of
+  `--human` text and of compact output. A subscription keeps the stored
+  view it inherited when it subscribed: its reply and batches say
+  `"source": "subscription_snapshot"` and that another view needs a new
+  subscription. In 0.1.2 one `--view-min-severity warning` on
   `events` hid 1,071 events from the same reader's later `trace`, and the
   only notice was a line at the end of the read that stored it.
 - `mutations` now keeps (`--view-keep`) and clears (`--view-clear`) a
